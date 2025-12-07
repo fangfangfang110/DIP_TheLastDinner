@@ -9,7 +9,110 @@ from datetime import datetime
 import image_methods
 
 # =============================================================================
-# 交互式 ROI (区域) 选择器 (保持不变)
+# 新增：四点透视选择器
+# =============================================================================
+class PointSelector(tk.Toplevel):
+    def __init__(self, parent, cv_image, title="请依次点击四个角 (左上->右上->右下->左下)"):
+        super().__init__(parent)
+        self.title(title)
+        self.cv_image = cv_image
+        self.result_points = None 
+        self.selected_points = [] # 存储点击的点
+        
+        # 计算缩放
+        screen_w = self.winfo_screenwidth() * 0.8
+        screen_h = self.winfo_screenheight() * 0.8
+        img_h, img_w = cv_image.shape[:2]
+        self.scale = min(screen_w / img_w, screen_h / img_h, 1.0) 
+        self.display_w = int(img_w * self.scale)
+        self.display_h = int(img_h * self.scale)
+        
+        rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb).resize((self.display_w, self.display_h), Image.Resampling.LANCZOS)
+        self.tk_img = ImageTk.PhotoImage(pil_img)
+        
+        # UI
+        self.canvas = tk.Canvas(self, width=self.display_w, height=self.display_h, cursor="cross")
+        self.canvas.pack(side=tk.TOP)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+        
+        btn_frame = tk.Frame(self, pady=10, bg="#ddd")
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.lbl_status = tk.Label(btn_frame, text="当前进度: 0/4", font=("bold", 10), bg="#ddd", fg="blue")
+        self.lbl_status.pack(side=tk.LEFT, padx=20)
+        
+        tk.Button(btn_frame, text="❌ 撤销上一点", command=self.undo_point, width=12).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✅ 确认变换", command=self.on_confirm, width=15, bg="#90ee90", font=("bold", 10)).pack(side=tk.RIGHT, padx=20)
+        tk.Button(btn_frame, text="取消", command=self.on_cancel, width=10).pack(side=tk.RIGHT, padx=5)
+
+        # 绑定点击
+        self.canvas.bind("<ButtonPress-1>", self.on_click)
+        
+        self.geometry(f"{self.display_w}x{self.display_h + 50}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+    def on_click(self, event):
+        if len(self.selected_points) >= 4:
+            return # 最多4个点
+
+        # 记录显示坐标用于绘图
+        x, y = event.x, event.y
+        self.selected_points.append((x, y))
+        
+        # 绘制点和连线
+        r = 5
+        self.canvas.create_oval(x-r, y-r, x+r, y+r, fill="red", outline="white", tags=f"p{len(self.selected_points)}")
+        self.canvas.create_text(x, y-15, text=str(len(self.selected_points)), fill="yellow", font=("bold", 12), tags=f"t{len(self.selected_points)}")
+        
+        # 如果有点，画连线
+        if len(self.selected_points) > 1:
+            prev = self.selected_points[-2]
+            curr = self.selected_points[-1]
+            self.canvas.create_line(prev[0], prev[1], curr[0], curr[1], fill="red", width=2, tags=f"l{len(self.selected_points)}")
+        
+        # 如果满4个点，封闭图形
+        if len(self.selected_points) == 4:
+            p4 = self.selected_points[-1]
+            p1 = self.selected_points[0]
+            self.canvas.create_line(p4[0], p4[1], p1[0], p1[1], fill="red", width=2, tags="l_close")
+
+        self.update_status()
+
+    def undo_point(self):
+        if not self.selected_points: return
+        n = len(self.selected_points)
+        self.selected_points.pop()
+        self.canvas.delete(f"p{n}")
+        self.canvas.delete(f"t{n}")
+        self.canvas.delete(f"l{n}")
+        self.canvas.delete("l_close")
+        self.update_status()
+
+    def update_status(self):
+        self.lbl_status.config(text=f"当前进度: {len(self.selected_points)}/4")
+
+    def on_confirm(self):
+        if len(self.selected_points) != 4:
+            messagebox.showwarning("提示", "请准确选取 4 个角点！")
+            return
+            
+        # 映射回原图坐标
+        real_points = []
+        for (sx, sy) in self.selected_points:
+            rx = int(sx / self.scale)
+            ry = int(sy / self.scale)
+            real_points.append([rx, ry])
+            
+        self.result_points = np.array(real_points, dtype=np.float32)
+        self.destroy()
+
+    def on_cancel(self): self.destroy()
+
+# =============================================================================
+# ROI (矩形) 选择器 (保持不变)
 # =============================================================================
 class ROISelector(tk.Toplevel):
     def __init__(self, parent, cv_image, title="请框选目标区域 (按住鼠标拖拽 -> 确定)"):
@@ -94,9 +197,8 @@ class ROISelector(tk.Toplevel):
 
     def on_cancel(self): self.destroy()
 
-
 # =============================================================================
-# 升级版：支持文件选择的多参数输入框
+# 多参数输入框 (保持不变)
 # =============================================================================
 class MultiParamDialog(tk.Toplevel):
     def __init__(self, parent, title, param_configs, history_values=None):
@@ -135,13 +237,11 @@ class MultiParamDialog(tk.Toplevel):
             if history_values and key in history_values:
                 initial_val = history_values[key]
             
-            # 如果是文件类型，输入框加宽
             entry = tk.Entry(frame, width=30 if p_type == 'file' else 10)
             entry.insert(0, str(initial_val))
             entry.grid(row=row, column=1, padx=5, pady=3, sticky="w")
             self.entries[key] = entry
             
-            # 【关键修改】添加文件浏览按钮
             if p_type == 'file':
                 btn = tk.Button(frame, text="📂", width=3, command=lambda e=entry: self.browse_file(e))
                 btn.grid(row=row, column=1, sticky="e", padx=5)
@@ -161,7 +261,6 @@ class MultiParamDialog(tk.Toplevel):
         self.wait_window(self)
 
     def browse_file(self, entry_widget):
-        # 允许选择所有常见的图片格式
         path = filedialog.askopenfilename(filetypes=[("Images", "*.jpg *.png *.bmp *.tif")])
         if path:
             entry_widget.delete(0, tk.END)
@@ -176,7 +275,7 @@ class MultiParamDialog(tk.Toplevel):
                 if p_type == 'number':
                     data[key] = float(val_str)
                 else:
-                    data[key] = val_str # 字符串直接存
+                    data[key] = val_str 
             self.result_data = data
             self.destroy()
         except ValueError:
@@ -197,11 +296,10 @@ class ImageProcessorApp:
         self.cv_img_processed = None
         self.img_path_current = None
         
-        # --- 日志系统重构 ---
         self.log_file_name = "image_processing_log.txt" 
-        self.ui_log = []          # 列表1: 所有的尝试操作 (显示在界面上)
-        self.persistent_log = []  # 列表2: 仅保存的成功操作 (写入文件)
-        self.pending_log_entry = None # 暂存当前正在预览的算法信息
+        self.ui_log = []          
+        self.persistent_log = []  
+        self.pending_log_entry = None 
         
         self.param_history = {} 
         self.zoom_factor = 2.0
@@ -216,42 +314,36 @@ class ImageProcessorApp:
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
+            # --- 新增: 透视变换 ---
+            "交互式透视变换校正": {
+                "func": image_methods.perspective_correction,
+                "interactive_points": True, # 特殊标记: 需要四点选择
+                "params": [
+                    {"key": "target_width", "label": "输出宽度(0自动)", "default": 0, "tip": "若0则自动计算"},
+                    {"key": "target_height", "label": "输出高度(0自动)", "default": 0, "tip": "例如1000"}
+                ]
+            },
             "转灰度图": {"func": image_methods.to_gray, "params": [{"key": "dummy", "label": "无需参数", "default": 1}]},
             "GrabCut 交互式抠图": {
                 "func": image_methods.grabcut_interactive,
                 "interactive_roi": True,
                 "params": [{"key": "iter_count", "label": "迭代次数", "default": 5}]
             },
-            # --- 新增配置 ---
             "区域修补 (指定Mask图片)": {
                 "func": image_methods.restoration_idw_external_mask,
-                "interactive_roi": True,  # 开启鼠标选框
+                "interactive_roi": True,  
                 "params": [
-                    {
-                        "key": "mask_path", 
-                        "label": "二值图路径", 
-                        "default": "", 
-                        "type": "file",   # 指定类型为文件，会显示浏览按钮
-                        "tip": "选择处理好的黑白二值图"
-                    },
-                    {
-                        "key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"
-                    }
+                    {"key": "mask_path", "label": "二值图路径", "default": "", "type": "file", "tip": "选择处理好的黑白二值图"},
+                    {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
                 ]
             },
             "形态学边缘检测": {
                 "func": image_methods.morph_edge_detection,
-                "params": [
-                    {"key": "kernel_size", "label": "线条粗细", "default": 3},
-                    {"key": "mode", "label": "检测模式", "default": 0, "tip": "0=标准, 1=外边缘, 2=内边缘"}
-                ]
+                "params": [{"key": "kernel_size", "label": "线条粗细", "default": 3}, {"key": "mode", "label": "检测模式", "default": 0, "tip": "0=标准, 1=外边缘, 2=内边缘"}]
             },
             "二值化处理 (黑白)": {
                 "func": image_methods.binary_threshold,
-                "params": [
-                    {"key": "thresh_val", "label": "阈值(模式0)", "default": 127},
-                    {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}
-                ]
+                "params": [{"key": "thresh_val", "label": "阈值(模式0)", "default": 127}, {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}]
             },
             "Gamma 亮度校正": {"func": image_methods.gamma_correction, "params": single("gamma", "Gamma值", 1.5, ">1 提亮")},
             "色彩饱和度": {"func": image_methods.color_saturation_boost, "params": single("scale", "倍数", 1.3, "1.0为原图")},
@@ -348,33 +440,23 @@ class ImageProcessorApp:
     # 逻辑部分
     # =========================================================================
     def log_operation(self, entry, is_ui_only=True):
-        """
-        :param entry: 日志内容
-        :param is_ui_only: 如果为True，只显示在界面，不存入文件
-        """
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         full_entry = f"{timestamp} {entry}"
         
-        # 1. 更新 UI (始终执行)
         self.ui_log.append(full_entry)
         self.log_text.config(state=tk.NORMAL)
         self.log_text.insert(tk.END, full_entry + "\n" + "-"*48 + "\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
         
-        # 2. 如果是文件保存操作，直接写入 persistent_log
         if not is_ui_only:
              self.persistent_log.append(full_entry)
 
     def save_session_log(self):
-        """仅将 persistent_log (成功保存的操作) 写入文件"""
         if not self.persistent_log: return
-        
         session_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 头部信息
         content = f"\n{'='*60}\n会话保存时间: {session_start}\n初始文件: {self.img_path_current}\n注意: 仅包含最终保存的有效操作步骤\n{'='*60}\n" 
         content += "\n".join(self.persistent_log) + "\n\n"
-        
         try:
             with open(self.log_file_name, 'a', encoding='utf-8') as f: f.write(content)
             print(f"有效日志已保存至 {self.log_file_name}")
@@ -394,7 +476,6 @@ class ImageProcessorApp:
         self.cv_img_processed = img.copy() 
         self.img_path_current = path
         
-        # 重置日志
         self.ui_log = [] 
         self.persistent_log = []
         self.pending_log_entry = None
@@ -412,7 +493,7 @@ class ImageProcessorApp:
             
         config = self.methods_config[method_name]
         
-        # 1. 交互式选框
+        # 1. 交互式选框 (ROI Selector)
         rect_roi = None
         if config.get("interactive_roi", False):
             selector = ROISelector(self.root, self.cv_img_original)
@@ -421,15 +502,24 @@ class ImageProcessorApp:
                 return 
             rect_roi = selector.result_rect
             self.log_operation(f"🖱️ 选区确定: {rect_roi}")
+
+        # 2. 交互式选点 (Point Selector) - 透视变换专用
+        points = None
+        if config.get("interactive_points", False):
+            selector = PointSelector(self.root, self.cv_img_original)
+            if selector.result_points is None:
+                self.log_operation(f"❌ 取消操作: {method_name}")
+                return
+            points = selector.result_points
+            self.log_operation(f"🖱️ 四点确定: {points.tolist()}")
         
-        # 2. 参数输入
+        # 3. 参数输入
         history = self.param_history.get(method_name, {})
         dialog = MultiParamDialog(self.root, f"参数: {method_name}", config["params"], history_values=history)
         if dialog.result_data is None: return 
         
         params = dialog.result_data
         
-        # 记录尝试操作 (UI)
         ui_msg = f"🚀 正在执行: {method_name}\n   参数: {params}"
         self.log_operation(ui_msg)
         
@@ -437,6 +527,7 @@ class ImageProcessorApp:
             img_in = self.cv_img_original.copy()
             kwargs = params.copy()
             if rect_roi: kwargs['rect'] = rect_roi
+            if points is not None: kwargs['points'] = points
                 
             res = config["func"](img_in, **kwargs)
             self.cv_img_processed = res
@@ -445,7 +536,6 @@ class ImageProcessorApp:
             self.refresh_display()
             self.log_operation(f"🎉 预览成功: {method_name}")
             
-            # 【关键】将此操作暂存。只有用户点击保存，才写入文件日志
             self.pending_log_entry = f"应用算法: [{method_name}] | 参数: {params}"
             
         except Exception as e:
@@ -457,25 +547,20 @@ class ImageProcessorApp:
         if self.cv_img_processed is None: return
         path = filedialog.asksaveasfilename(defaultextension=".jpg")
         if path:
-            # 1. 保存文件
             cv2.imencode(".jpg", self.cv_img_processed)[1].tofile(path)
             
-            # 2. 更新原图状态
             self.cv_img_original = self.cv_img_processed.copy()
             
-            # 3. 【核心日志逻辑】
-            # 因为保存了，所以上一步的"暂存操作"变成了"永久历史"
             if self.pending_log_entry:
                 self.log_operation(f"✅ 确认应用并保存: {self.pending_log_entry}", is_ui_only=False)
-                self.pending_log_entry = None # 清空暂存
+                self.pending_log_entry = None 
             
-            # 记录保存动作本身
             save_msg = f"💾 文件已保存至: {os.path.basename(path)}"
             self.log_operation(save_msg, is_ui_only=False)
             
             self.refresh_display()
 
-    # (以下显示相关函数保持不变)
+    # (显示逻辑保持不变)
     def refresh_display(self):
         if self.cv_img_original is None: return
         w, h = self.lbl_original.winfo_width(), self.lbl_original.winfo_height()

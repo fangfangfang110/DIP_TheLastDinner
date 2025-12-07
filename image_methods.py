@@ -491,3 +491,48 @@ def restoration_idw_external_mask(image, rect, mask_path, k_neighbors=5, **kwarg
     result[y:y+h, x:x+w] = img_roi
     
     return result
+
+def perspective_correction(image, points, target_width=0, target_height=0, **kwargs):
+    """
+    透视变换校正
+    :param points: [(x1,y1), (x2,y2), (x3,y3), (x4,y4)] 四个点坐标
+    :param target_width: 输出宽度 (0则自动计算)
+    :param target_height: 输出高度 (0则自动计算)
+    """
+    if points is None or len(points) != 4:
+        print("错误：必须选择 4 个点")
+        return image
+
+    pts1 = np.float32(points)
+    
+    # 如果用户没有指定宽高，根据选框的最大边长自动计算
+    if target_width == 0 or target_height == 0:
+        # 获取四个点
+        (tl, tr, br, bl) = pts1
+        
+        # 计算宽度 (取上下边长的最大值)
+        widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+        widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+        maxWidth = max(int(widthA), int(widthB))
+        
+        # 计算高度 (取左右边长的最大值)
+        heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+        heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+        maxHeight = max(int(heightA), int(heightB))
+        
+        if target_width == 0: target_width = maxWidth
+        if target_height == 0: target_height = maxHeight
+
+    # 定义目标图的四个角 (左上, 右上, 右下, 左下)
+    pts2 = np.float32([
+        [0, 0],
+        [target_width, 0],
+        [target_width, target_height],
+        [0, target_height]
+    ])
+
+    # 生成变换矩阵并执行
+    M = cv2.getPerspectiveTransform(pts1, pts2)
+    dst = cv2.warpPerspective(image, M, (int(target_width), int(target_height)))
+    
+    return dst
