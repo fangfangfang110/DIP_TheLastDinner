@@ -6,7 +6,7 @@ import numpy as np
 import os
 from datetime import datetime
 
-import image_methods  # 引入您的算法库
+import image_methods
 
 # =============================================================================
 # 交互式 ROI (区域) 选择器 (保持不变)
@@ -190,7 +190,7 @@ class MultiParamDialog(tk.Toplevel):
 class ImageProcessorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("数字图像处理专业平台 (IDW修复 + 智能日志)")
+        self.root.title("数字图像处理专业平台")
         self.root.geometry("1500x900") 
         
         self.cv_img_original = None
@@ -262,7 +262,7 @@ class ImageProcessorApp:
             "色度降噪": {"func": image_methods.chroma_denoise, "params": single("kernel_size", "核大小", 21)},
             "NLM 强力降噪": {"func": image_methods.nlm_denoise_colored, "params": [{"key": "h", "label": "亮度强度", "default": 10}, {"key": "h_color", "label": "色彩强度", "default": 10}, {"key": "templateWindowSize", "label": "模板大小", "default": 7}, {"key": "searchWindowSize", "label": "搜索大小", "default": 21}]},
             "暗通道去雾": {"func": image_methods.dehaze_dcp, "params": single("omega", "去雾程度", 0.95)},
-            "暗通道去雾 (空间)": {"func": image_methods.dehaze_dcp_spatial, "params": [{"key": "omega_center", "label": "中心强度", "default": 0.98}, {"key": "omega_edge", "label": "边缘强度", "default": 0.60}, {"key": "radius", "label": "中心半径", "default": 0.60}]},
+            "暗通道去雾 (局部)": {"func": image_methods.dehaze_dcp_spatial, "params": [{"key": "omega_center", "label": "中心强度", "default": 0.98}, {"key": "omega_edge", "label": "边缘强度", "default": 0.60}, {"key": "radius", "label": "中心半径", "default": 0.60}]},
             "金字塔融合增强": {"func": image_methods.laplacian_pyramid_fusion, "params": [
                      {'key': 'b_base_h', 'label': '[蓝]去噪h', 'default': 9.0}, {'key': 'b_det_d', 'label': '[蓝]细节d', 'default': 5},
                      {'key': 'g_base_h', 'label': '[绿]去噪h', 'default': 5.0}, {'key': 'g_det_d', 'label': '[绿]细节d', 'default': 5},

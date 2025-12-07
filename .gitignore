@@ -1,0 +1,5 @@
+# ÅÅ³ýVisual Studio±¾µØ»º´æ
+.vs/
+# ÅÅ³ýPython±àÒë»º´æ£¨ÈôÓÐ£©
+__pycache__/
+*.pyc
