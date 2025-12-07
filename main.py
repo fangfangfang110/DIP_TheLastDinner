@@ -9,110 +9,7 @@ from datetime import datetime
 import image_methods
 
 # =============================================================================
-# 新增：四点透视选择器
-# =============================================================================
-class PointSelector(tk.Toplevel):
-    def __init__(self, parent, cv_image, title="请依次点击四个角 (左上->右上->右下->左下)"):
-        super().__init__(parent)
-        self.title(title)
-        self.cv_image = cv_image
-        self.result_points = None 
-        self.selected_points = [] # 存储点击的点
-        
-        # 计算缩放
-        screen_w = self.winfo_screenwidth() * 0.8
-        screen_h = self.winfo_screenheight() * 0.8
-        img_h, img_w = cv_image.shape[:2]
-        self.scale = min(screen_w / img_w, screen_h / img_h, 1.0) 
-        self.display_w = int(img_w * self.scale)
-        self.display_h = int(img_h * self.scale)
-        
-        rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(rgb).resize((self.display_w, self.display_h), Image.Resampling.LANCZOS)
-        self.tk_img = ImageTk.PhotoImage(pil_img)
-        
-        # UI
-        self.canvas = tk.Canvas(self, width=self.display_w, height=self.display_h, cursor="cross")
-        self.canvas.pack(side=tk.TOP)
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
-        
-        btn_frame = tk.Frame(self, pady=10, bg="#ddd")
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        self.lbl_status = tk.Label(btn_frame, text="当前进度: 0/4", font=("bold", 10), bg="#ddd", fg="blue")
-        self.lbl_status.pack(side=tk.LEFT, padx=20)
-        
-        tk.Button(btn_frame, text="❌ 撤销上一点", command=self.undo_point, width=12).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="✅ 确认变换", command=self.on_confirm, width=15, bg="#90ee90", font=("bold", 10)).pack(side=tk.RIGHT, padx=20)
-        tk.Button(btn_frame, text="取消", command=self.on_cancel, width=10).pack(side=tk.RIGHT, padx=5)
-
-        # 绑定点击
-        self.canvas.bind("<ButtonPress-1>", self.on_click)
-        
-        self.geometry(f"{self.display_w}x{self.display_h + 50}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
-        self.transient(parent)
-        self.grab_set()
-        self.wait_window(self)
-
-    def on_click(self, event):
-        if len(self.selected_points) >= 4:
-            return # 最多4个点
-
-        # 记录显示坐标用于绘图
-        x, y = event.x, event.y
-        self.selected_points.append((x, y))
-        
-        # 绘制点和连线
-        r = 5
-        self.canvas.create_oval(x-r, y-r, x+r, y+r, fill="red", outline="white", tags=f"p{len(self.selected_points)}")
-        self.canvas.create_text(x, y-15, text=str(len(self.selected_points)), fill="yellow", font=("bold", 12), tags=f"t{len(self.selected_points)}")
-        
-        # 如果有点，画连线
-        if len(self.selected_points) > 1:
-            prev = self.selected_points[-2]
-            curr = self.selected_points[-1]
-            self.canvas.create_line(prev[0], prev[1], curr[0], curr[1], fill="red", width=2, tags=f"l{len(self.selected_points)}")
-        
-        # 如果满4个点，封闭图形
-        if len(self.selected_points) == 4:
-            p4 = self.selected_points[-1]
-            p1 = self.selected_points[0]
-            self.canvas.create_line(p4[0], p4[1], p1[0], p1[1], fill="red", width=2, tags="l_close")
-
-        self.update_status()
-
-    def undo_point(self):
-        if not self.selected_points: return
-        n = len(self.selected_points)
-        self.selected_points.pop()
-        self.canvas.delete(f"p{n}")
-        self.canvas.delete(f"t{n}")
-        self.canvas.delete(f"l{n}")
-        self.canvas.delete("l_close")
-        self.update_status()
-
-    def update_status(self):
-        self.lbl_status.config(text=f"当前进度: {len(self.selected_points)}/4")
-
-    def on_confirm(self):
-        if len(self.selected_points) != 4:
-            messagebox.showwarning("提示", "请准确选取 4 个角点！")
-            return
-            
-        # 映射回原图坐标
-        real_points = []
-        for (sx, sy) in self.selected_points:
-            rx = int(sx / self.scale)
-            ry = int(sy / self.scale)
-            real_points.append([rx, ry])
-            
-        self.result_points = np.array(real_points, dtype=np.float32)
-        self.destroy()
-
-    def on_cancel(self): self.destroy()
-
-# =============================================================================
-# ROI (矩形) 选择器 (保持不变)
+# 交互式 ROI (区域) 选择器 (保持不变)
 # =============================================================================
 class ROISelector(tk.Toplevel):
     def __init__(self, parent, cv_image, title="请框选目标区域 (按住鼠标拖拽 -> 确定)"):
@@ -198,7 +95,93 @@ class ROISelector(tk.Toplevel):
     def on_cancel(self): self.destroy()
 
 # =============================================================================
-# 多参数输入框 (保持不变)
+# 新增：四点透视选择器 (保持不变)
+# =============================================================================
+class PointSelector(tk.Toplevel):
+    def __init__(self, parent, cv_image, title="请依次点击四个角 (左上->右上->右下->左下)"):
+        super().__init__(parent)
+        self.title(title)
+        self.cv_image = cv_image
+        self.result_points = None 
+        self.selected_points = [] 
+        
+        screen_w = self.winfo_screenwidth() * 0.8
+        screen_h = self.winfo_screenheight() * 0.8
+        img_h, img_w = cv_image.shape[:2]
+        self.scale = min(screen_w / img_w, screen_h / img_h, 1.0) 
+        self.display_w = int(img_w * self.scale)
+        self.display_h = int(img_h * self.scale)
+        
+        rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb).resize((self.display_w, self.display_h), Image.Resampling.LANCZOS)
+        self.tk_img = ImageTk.PhotoImage(pil_img)
+        
+        self.canvas = tk.Canvas(self, width=self.display_w, height=self.display_h, cursor="cross")
+        self.canvas.pack(side=tk.TOP)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+        
+        btn_frame = tk.Frame(self, pady=10, bg="#ddd")
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.lbl_status = tk.Label(btn_frame, text="当前进度: 0/4", font=("bold", 10), bg="#ddd", fg="blue")
+        self.lbl_status.pack(side=tk.LEFT, padx=20)
+        
+        tk.Button(btn_frame, text="❌ 撤销上一点", command=self.undo_point, width=12).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="✅ 确认变换", command=self.on_confirm, width=15, bg="#90ee90", font=("bold", 10)).pack(side=tk.RIGHT, padx=20)
+        tk.Button(btn_frame, text="取消", command=self.on_cancel, width=10).pack(side=tk.RIGHT, padx=5)
+
+        self.canvas.bind("<ButtonPress-1>", self.on_click)
+        
+        self.geometry(f"{self.display_w}x{self.display_h + 50}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+    def on_click(self, event):
+        if len(self.selected_points) >= 4: return
+        x, y = event.x, event.y
+        self.selected_points.append((x, y))
+        r = 5
+        self.canvas.create_oval(x-r, y-r, x+r, y+r, fill="red", outline="white", tags=f"p{len(self.selected_points)}")
+        self.canvas.create_text(x, y-15, text=str(len(self.selected_points)), fill="yellow", font=("bold", 12), tags=f"t{len(self.selected_points)}")
+        if len(self.selected_points) > 1:
+            prev = self.selected_points[-2]
+            curr = self.selected_points[-1]
+            self.canvas.create_line(prev[0], prev[1], curr[0], curr[1], fill="red", width=2, tags=f"l{len(self.selected_points)}")
+        if len(self.selected_points) == 4:
+            p4, p1 = self.selected_points[-1], self.selected_points[0]
+            self.canvas.create_line(p4[0], p4[1], p1[0], p1[1], fill="red", width=2, tags="l_close")
+        self.update_status()
+
+    def undo_point(self):
+        if not self.selected_points: return
+        n = len(self.selected_points)
+        self.selected_points.pop()
+        self.canvas.delete(f"p{n}")
+        self.canvas.delete(f"t{n}")
+        self.canvas.delete(f"l{n}")
+        self.canvas.delete("l_close")
+        self.update_status()
+
+    def update_status(self):
+        self.lbl_status.config(text=f"当前进度: {len(self.selected_points)}/4")
+
+    def on_confirm(self):
+        if len(self.selected_points) != 4:
+            messagebox.showwarning("提示", "请准确选取 4 个角点！")
+            return
+        real_points = []
+        for (sx, sy) in self.selected_points:
+            rx = int(sx / self.scale)
+            ry = int(sy / self.scale)
+            real_points.append([rx, ry])
+        self.result_points = np.array(real_points, dtype=np.float32)
+        self.destroy()
+
+    def on_cancel(self): self.destroy()
+
+# =============================================================================
+# 升级版 (Fixed)：自适应多参数输入框
 # =============================================================================
 class MultiParamDialog(tk.Toplevel):
     def __init__(self, parent, title, param_configs, history_values=None):
@@ -206,21 +189,38 @@ class MultiParamDialog(tk.Toplevel):
         self.title(title)
         self.result_data = None
         
+        # 1. 基础布局配置
+        self.minsize(600, 300) # 设置最小尺寸
+        
         canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
         frame = tk.Frame(canvas, padx=15, pady=15)
         
         scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=scrollbar.set)
+        
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        canvas.create_window((0,0), window=frame, anchor="nw", tags="frame")
         
-        def on_frame_configure(event): canvas.configure(scrollregion=canvas.bbox("all"))
+        # 关键修改1: frame 宽度绑定到 canvas 宽度，实现自适应拉伸
+        canvas_window = canvas.create_window((0,0), window=frame, anchor="nw", tags="frame")
+        
+        def on_canvas_configure(event):
+            canvas.itemconfig(canvas_window, width=event.width)
+        canvas.bind("<Configure>", on_canvas_configure)
+
+        def on_frame_configure(event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
         frame.bind("<Configure>", on_frame_configure)
+
+        # 关键修改2: 配置列权重，让说明列自动占用剩余空间
+        frame.columnconfigure(0, weight=0) # 参数名: 固定
+        frame.columnconfigure(1, weight=1) # 输入框: 稍微拉伸
+        frame.columnconfigure(2, weight=2) # 说明: 主要拉伸区
 
         self.entries = {}
         self.param_types = {}
 
+        # 表头
         tk.Label(frame, text="参数名称", font=("bold", 9)).grid(row=0, column=0, sticky="w", padx=5)
         tk.Label(frame, text="输入值 / 路径", font=("bold", 9)).grid(row=0, column=1, sticky="w", padx=5)
         tk.Label(frame, text="说明", font=("bold", 9), fg="#666").grid(row=0, column=2, sticky="w", padx=5)
@@ -231,31 +231,50 @@ class MultiParamDialog(tk.Toplevel):
             p_type = cfg.get('type', 'number') 
             self.param_types[key] = p_type
 
-            tk.Label(frame, text=cfg['label'] + ":").grid(row=row, column=0, sticky="e", padx=5, pady=3)
+            # Label
+            tk.Label(frame, text=cfg['label'] + ":", anchor="e").grid(row=row, column=0, sticky="e", padx=5, pady=3)
             
             initial_val = cfg['default']
             if history_values and key in history_values:
                 initial_val = history_values[key]
             
-            entry = tk.Entry(frame, width=30 if p_type == 'file' else 10)
-            entry.insert(0, str(initial_val))
-            entry.grid(row=row, column=1, padx=5, pady=3, sticky="w")
-            self.entries[key] = entry
-            
+            # Entry & Button
             if p_type == 'file':
-                btn = tk.Button(frame, text="📂", width=3, command=lambda e=entry: self.browse_file(e))
-                btn.grid(row=row, column=1, sticky="e", padx=5)
+                # 关键修改3: 对于文件输入，使用 Frame 组合，防止按钮和输入框重叠
+                f_container = tk.Frame(frame)
+                f_container.grid(row=row, column=1, sticky="ew", padx=5)
+                
+                entry = tk.Entry(f_container)
+                entry.insert(0, str(initial_val))
+                entry.pack(side="left", fill="x", expand=True)
+                self.entries[key] = entry
+                
+                btn = tk.Button(f_container, text="📂", command=lambda e=entry: self.browse_file(e))
+                btn.pack(side="right", padx=(5,0))
+            else:
+                # 普通数字输入
+                entry = tk.Entry(frame)
+                entry.insert(0, str(initial_val))
+                # 数字输入框不需要太宽，但可以设置sticky="w"让它靠左
+                entry.grid(row=row, column=1, sticky="ew", padx=5, pady=3)
+                self.entries[key] = entry
 
+            # Tip (说明)
             tip = cfg.get('tip', '')
-            tk.Label(frame, text=tip, fg="#555", font=("Arial", 8)).grid(row=row, column=2, sticky="w", padx=5)
+            # 关键修改4: 增加 wraplength 实现自动换行，防止文字被截断
+            tk.Label(frame, text=tip, fg="#555", font=("Arial", 8), 
+                     wraplength=280, justify="left").grid(row=row, column=2, sticky="w", padx=5)
 
+        # 按钮区
         btn_frame = tk.Frame(self, pady=10)
         btn_frame.pack(side="bottom", fill="x")
         tk.Button(btn_frame, text="确定执行", command=self.on_ok, width=15, bg="#dddddd").pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text="取消", command=self.on_cancel, width=10).pack(side=tk.LEFT, padx=10)
         
-        h = min(800, len(param_configs) * 40 + 100)
-        self.geometry(f"600x{h}+{parent.winfo_rootx()+100}+{parent.winfo_rooty()+50}")
+        # 初始高度计算，宽度增加到 750
+        h = min(800, len(param_configs) * 50 + 100)
+        self.geometry(f"750x{h}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
+        
         self.transient(parent)
         self.grab_set()
         self.wait_window(self)
@@ -284,7 +303,7 @@ class MultiParamDialog(tk.Toplevel):
     def on_cancel(self): self.destroy()
 
 # =============================================================================
-# 主应用程序
+# 主应用程序 (保持不变)
 # =============================================================================
 class ImageProcessorApp:
     def __init__(self, root):
@@ -314,10 +333,9 @@ class ImageProcessorApp:
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
-            # --- 新增: 透视变换 ---
             "交互式透视变换校正": {
                 "func": image_methods.perspective_correction,
-                "interactive_points": True, # 特殊标记: 需要四点选择
+                "interactive_points": True, 
                 "params": [
                     {"key": "target_width", "label": "输出宽度(0自动)", "default": 0, "tip": "若0则自动计算"},
                     {"key": "target_height", "label": "输出高度(0自动)", "default": 0, "tip": "例如1000"}
@@ -503,7 +521,7 @@ class ImageProcessorApp:
             rect_roi = selector.result_rect
             self.log_operation(f"🖱️ 选区确定: {rect_roi}")
 
-        # 2. 交互式选点 (Point Selector) - 透视变换专用
+        # 2. 交互式选点 (Point Selector)
         points = None
         if config.get("interactive_points", False):
             selector = PointSelector(self.root, self.cv_img_original)
