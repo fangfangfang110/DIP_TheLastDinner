@@ -540,44 +540,46 @@ def perspective_correction(image, points, target_width=0, target_height=0, **kwa
 # =============================================================================
 # 局部掩码生成 (魔棒)
 # =============================================================================
-def generate_local_mask(image, rect, point_relative, tolerance=20, **kwargs):
+def generate_local_mask(image, rect, points_relative, tolerance=20, **kwargs):
     """
-    局部掩码生成：
-    1. 根据 rect 截取 ROI
-    2. 根据 point_relative (相对于 ROI 左上角的坐标) 获取种子颜色
-    3. 在 ROI 范围内进行颜色范围匹配 (inRange)
-    4. 返回全尺寸的二值化图像 (ROI内为掩码，ROI外全黑)
+    局部掩码生成 (支持多点):
+    对每个种子点计算掩码范围，最后取并集。
+    points_relative: 包含多个 (x, y) 元组的列表
     """
-    if rect is None or point_relative is None:
+    if rect is None or not points_relative:
         return image
 
     x, y, w, h = rect
-    px, py = point_relative #这是相对于截取出来的ROI小图的坐标
-
-    # 1. 截取 ROI
     roi = image[y:y+h, x:x+w]
     
-    # 安全检查：防止点超出范围
-    if px < 0 or px >= w or py < 0 or py >= h:
-        print("错误：选点超出了ROI范围")
-        return image
-
-    # 2. 获取种子颜色
-    seed_color = roi[py, px] # 注意 numpy 是 [row, col] 即 [y, x]
-    
-    # 3. 计算上下限
+    # 初始化一个全黑的 ROI 掩码
+    accumulated_mask_roi = np.zeros(roi.shape[:2], dtype=np.uint8)
     tol = float(tolerance)
-    lower_bound = np.clip(seed_color - tol, 0, 255).astype(np.uint8)
-    upper_bound = np.clip(seed_color + tol, 0, 255).astype(np.uint8)
+
+    # 【核心修改】遍历所有选中的点
+    # 兼容性处理：如果只传了一个点(非列表)，转为列表
+    if not isinstance(points_relative, list):
+        points_relative = [points_relative]
+
+    for (px, py) in points_relative:
+        # 安全检查
+        if px < 0 or px >= w or py < 0 or py >= h:
+            continue
+            
+        seed_color = roi[py, px]
+        
+        # 计算该点的上下限
+        lower_bound = np.clip(seed_color - tol, 0, 255).astype(np.uint8)
+        upper_bound = np.clip(seed_color + tol, 0, 255).astype(np.uint8)
+        
+        # 生成该点的掩码
+        mask_i = cv2.inRange(roi, lower_bound, upper_bound)
+        
+        # 【关键】使用 bitwise_or 将新掩码合并到总掩码中 (取并集)
+        accumulated_mask_roi = cv2.bitwise_or(accumulated_mask_roi, mask_i)
     
-    # 4. 生成局部掩码 (单通道)
-    mask_roi = cv2.inRange(roi, lower_bound, upper_bound)
-    
-    # 5. 放入全黑背景
-    # 创建一个与原图同大小的全黑单通道图
+    # 放入全黑背景
     full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    # 将 ROI 掩码填入对应位置
-    full_mask[y:y+h, x:x+w] = mask_roi
+    full_mask[y:y+h, x:x+w] = accumulated_mask_roi
     
-    # 6. 转回 3通道 BGR 以便平台显示和保存
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
