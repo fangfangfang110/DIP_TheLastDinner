@@ -2,7 +2,7 @@
 import numpy as np
 import os
 from datetime import datetime
-from scipy.spatial import cKDTree  # 【新增】用于加速最近邻搜索
+from scipy.spatial import cKDTree  # 用于加速最近邻搜索
 # =============================================================================
 # 通用辅助函数
 # =============================================================================
@@ -536,3 +536,48 @@ def perspective_correction(image, points, target_width=0, target_height=0, **kwa
     dst = cv2.warpPerspective(image, M, (int(target_width), int(target_height)))
     
     return dst
+
+# =============================================================================
+# 局部掩码生成 (魔棒)
+# =============================================================================
+def generate_local_mask(image, rect, point_relative, tolerance=20, **kwargs):
+    """
+    局部掩码生成：
+    1. 根据 rect 截取 ROI
+    2. 根据 point_relative (相对于 ROI 左上角的坐标) 获取种子颜色
+    3. 在 ROI 范围内进行颜色范围匹配 (inRange)
+    4. 返回全尺寸的二值化图像 (ROI内为掩码，ROI外全黑)
+    """
+    if rect is None or point_relative is None:
+        return image
+
+    x, y, w, h = rect
+    px, py = point_relative #这是相对于截取出来的ROI小图的坐标
+
+    # 1. 截取 ROI
+    roi = image[y:y+h, x:x+w]
+    
+    # 安全检查：防止点超出范围
+    if px < 0 or px >= w or py < 0 or py >= h:
+        print("错误：选点超出了ROI范围")
+        return image
+
+    # 2. 获取种子颜色
+    seed_color = roi[py, px] # 注意 numpy 是 [row, col] 即 [y, x]
+    
+    # 3. 计算上下限
+    tol = float(tolerance)
+    lower_bound = np.clip(seed_color - tol, 0, 255).astype(np.uint8)
+    upper_bound = np.clip(seed_color + tol, 0, 255).astype(np.uint8)
+    
+    # 4. 生成局部掩码 (单通道)
+    mask_roi = cv2.inRange(roi, lower_bound, upper_bound)
+    
+    # 5. 放入全黑背景
+    # 创建一个与原图同大小的全黑单通道图
+    full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    # 将 ROI 掩码填入对应位置
+    full_mask[y:y+h, x:x+w] = mask_roi
+    
+    # 6. 转回 3通道 BGR 以便平台显示和保存
+    return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)

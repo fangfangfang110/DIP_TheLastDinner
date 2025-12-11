@@ -180,6 +180,60 @@ class PointSelector(tk.Toplevel):
 
     def on_cancel(self): self.destroy()
 
+
+# =============================================================================
+# 单点像素选择器 (用于在 ROI 中取色)
+# =============================================================================
+class PixelSelector(tk.Toplevel):
+    def __init__(self, parent, cv_roi, title="请点击画面中的目标颜色点"):
+        super().__init__(parent)
+        self.title(title)
+        self.cv_roi = cv_roi
+        self.result_point = None # 存储 (x, y)
+        
+        # 放大显示 ROI 以便精确点击
+        roi_h, roi_w = cv_roi.shape[:2]
+        
+        # 计算适合屏幕的缩放比例 (最大放大到 800x800)
+        scale_w = 800 / roi_w
+        scale_h = 800 / roi_h
+        self.scale = min(scale_w, scale_h, 10.0) # 限制最大放大倍数
+        if self.scale < 1: self.scale = 1.0
+        
+        self.display_w = int(roi_w * self.scale)
+        self.display_h = int(roi_h * self.scale)
+        
+        rgb = cv2.cvtColor(cv_roi, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb).resize((self.display_w, self.display_h), Image.Resampling.NEAREST)
+        self.tk_img = ImageTk.PhotoImage(pil_img)
+        
+        self.canvas = tk.Canvas(self, width=self.display_w, height=self.display_h, cursor="tcross")
+        self.canvas.pack(side=tk.TOP)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img)
+        
+        tk.Label(self, text="请点击您想要提取的颜色区域中心", bg="#ddd", pady=5).pack(fill=tk.X)
+        
+        self.canvas.bind("<Button-1>", self.on_click)
+        
+        # 窗口居中
+        self.geometry(f"{self.display_w}x{self.display_h + 30}+{parent.winfo_rootx()+100}+{parent.winfo_rooty()+100}")
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+    def on_click(self, event):
+        # 将点击坐标映射回原 ROI 坐标
+        real_x = int(event.x / self.scale)
+        real_y = int(event.y / self.scale)
+        
+        # 边界检查
+        h, w = self.cv_roi.shape[:2]
+        real_x = np.clip(real_x, 0, w-1)
+        real_y = np.clip(real_y, 0, h-1)
+        
+        self.result_point = (real_x, real_y)
+        self.destroy()
+
 # =============================================================================
 # 自适应多参数输入框
 # =============================================================================
@@ -366,6 +420,13 @@ class ImageProcessorApp:
                 "func": image_methods.binary_threshold,
                 "params": [{"key": "thresh_val", "label": "阈值(模式0)", "default": 127}, {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}]
             },
+            "局部掩码生成 (颜色阈值)": {
+                "func": image_methods.generate_local_mask,
+                "roi_and_point": True,  # 【自定义标记】表示需要先框选ROI，再取点
+                "params": [
+                    {"key": "tolerance", "label": "容差范围", "default": 20, "tip": "颜色浮动范围 (0-255)"}
+                ]
+            },
             "Gamma 亮度校正": {
                 "func": image_methods.gamma_correction,
                "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
@@ -538,10 +599,32 @@ class ImageProcessorApp:
             return
             
         config = self.methods_config[method_name]
-        
-        # 1. 交互式选框 (ROI Selector)
+
         rect_roi = None
-        if config.get("interactive_roi", False):
+        points = None
+        point_relative = None
+
+        if config.get("roi_and_point", False):
+            # 步骤1: 先框选 ROI
+            selector_roi = ROISelector(self.root, self.cv_img_original, title="第一步：请框选要处理的区域")
+            if selector_roi.result_rect is None:
+                self.log_operation(f"❌ 取消操作: {method_name}")
+                return 
+            rect_roi = selector_roi.result_rect
+            
+            # 步骤2: 在 ROI 中取点
+            x, y, w, h = rect_roi
+            roi_img = self.cv_img_original[y:y+h, x:x+w]
+            selector_pixel = PixelSelector(self.root, roi_img, title="第二步：请点击目标颜色的像素")
+            if selector_pixel.result_point is None:
+                self.log_operation(f"❌ 取消操作: {method_name}")
+                return
+            point_relative = selector_pixel.result_point
+            
+            self.log_operation(f"🖱️ 区域+取点确定: ROI={rect_roi}, Point={point_relative}")
+
+        # 1. 交互式选框 (ROI Selector)
+        elif config.get("interactive_roi", False):
             selector = ROISelector(self.root, self.cv_img_original)
             if selector.result_rect is None:
                 self.log_operation(f"❌ 取消操作: {method_name}")
@@ -550,7 +633,6 @@ class ImageProcessorApp:
             self.log_operation(f"🖱️ 选区确定: {rect_roi}")
 
         # 2. 交互式选点 (Point Selector)
-        points = None
         if config.get("interactive_points", False):
             selector = PointSelector(self.root, self.cv_img_original)
             if selector.result_points is None:
@@ -558,7 +640,7 @@ class ImageProcessorApp:
                 return
             points = selector.result_points
             self.log_operation(f"🖱️ 四点确定: {points.tolist()}")
-        
+       
         # 3. 参数输入
         history = self.param_history.get(method_name, {})
         dialog = MultiParamDialog(self.root, f"参数: {method_name}", config["params"], history_values=history)
@@ -572,8 +654,11 @@ class ImageProcessorApp:
         try:
             img_in = self.cv_img_original.copy()
             kwargs = params.copy()
+
+            # 传入收集到的交互数据
             if rect_roi: kwargs['rect'] = rect_roi
             if points is not None: kwargs['points'] = points
+            if point_relative is not None: kwargs['point_relative'] = point_relative # 【新增】
                 
             res = config["func"](img_in, **kwargs)
             self.cv_img_processed = res
