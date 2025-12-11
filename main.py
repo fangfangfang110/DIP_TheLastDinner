@@ -9,7 +9,7 @@ from datetime import datetime
 import image_methods
 
 # =============================================================================
-# 交互式 ROI (区域) 选择器 (保持不变)
+# 交互式 ROI (区域) 选择器
 # =============================================================================
 class ROISelector(tk.Toplevel):
     def __init__(self, parent, cv_image, title="请框选目标区域 (按住鼠标拖拽 -> 确定)"):
@@ -95,7 +95,7 @@ class ROISelector(tk.Toplevel):
     def on_cancel(self): self.destroy()
 
 # =============================================================================
-# 新增：四点透视选择器 (保持不变)
+# 四点透视选择器
 # =============================================================================
 class PointSelector(tk.Toplevel):
     def __init__(self, parent, cv_image, title="请依次点击四个角 (左上->右上->右下->左下)"):
@@ -181,7 +181,7 @@ class PointSelector(tk.Toplevel):
     def on_cancel(self): self.destroy()
 
 # =============================================================================
-# 升级版 (Fixed)：自适应多参数输入框
+# 自适应多参数输入框
 # =============================================================================
 class MultiParamDialog(tk.Toplevel):
     def __init__(self, parent, title, param_configs, history_values=None):
@@ -303,7 +303,7 @@ class MultiParamDialog(tk.Toplevel):
     def on_cancel(self): self.destroy()
 
 # =============================================================================
-# 主应用程序 (保持不变)
+# 主应用程序
 # =============================================================================
 class ImageProcessorApp:
     def __init__(self, root):
@@ -341,7 +341,10 @@ class ImageProcessorApp:
                     {"key": "target_height", "label": "输出高度(0自动)", "default": 0, "tip": "例如1000"}
                 ]
             },
-            "转灰度图": {"func": image_methods.to_gray, "params": [{"key": "dummy", "label": "无需参数", "default": 1}]},
+            "转灰度图": {
+                "func": image_methods.to_gray,
+                "params": [{"key": "dummy", "label": "无需参数", "default": 1}]
+                },
             "GrabCut 交互式抠图": {
                 "func": image_methods.grabcut_interactive,
                 "interactive_roi": True,
@@ -363,7 +366,10 @@ class ImageProcessorApp:
                 "func": image_methods.binary_threshold,
                 "params": [{"key": "thresh_val", "label": "阈值(模式0)", "default": 127}, {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}]
             },
-            "Gamma 亮度校正": {"func": image_methods.gamma_correction, "params": single("gamma", "Gamma值", 1.5, ">1 提亮")},
+            "Gamma 亮度校正": {
+                "func": image_methods.gamma_correction,
+               "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
+            },
             "色彩饱和度": {"func": image_methods.color_saturation_boost, "params": single("scale", "倍数", 1.3, "1.0为原图")},
             "CLAHE 对比度增强": {"func": image_methods.clahe_enhance, "params": single("clip_limit", "Clip Limit", 3.0)},
             "形态学对比度": {"func": image_methods.morph_contrast_enhance, "params": single("kernel_size", "核大小", 15)},
@@ -406,10 +412,31 @@ class ImageProcessorApp:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        def _on_mousewheel(event):
+            # Windows/MacOS 滚轮处理
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_mousewheel(event):
+            # 鼠标进入区域：绑定滚轮事件 (使用 bind_all 捕获全局滚轮)
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+            # Linux 系统兼容 (Button-4 上滚, Button-5 下滚)
+            canvas.bind_all("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+            canvas.bind_all("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
+        def _unbind_mousewheel(event):
+            # 鼠标离开区域：解绑，防止干扰其他组件(如日志栏)
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+
+        # 将进入/离开事件绑定到最外层的容器 algo_frame 上
+        algo_frame.bind('<Enter>', _bind_mousewheel)
+        algo_frame.bind('<Leave>', _unbind_mousewheel)
+
         for name in self.methods_config:
             tk.Button(scrollable_frame, text=name, command=lambda n=name: self.apply_method(n), anchor="w").pack(fill=tk.X, pady=2)
 
-        log_frame = tk.LabelFrame(frame_left, text="实时记录 (所有操作)", font=("bold", 9))
+        log_frame = tk.LabelFrame(frame_left, text="实时操作记录", font=("bold", 9))
         log_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=5, pady=5)
         self.log_text = tk.Text(log_frame, height=18, width=25, state=tk.DISABLED, font=("Consolas", 8), bg="#f5f5f5")
         self.log_text.pack(fill=tk.BOTH, padx=2, pady=2)
@@ -578,7 +605,7 @@ class ImageProcessorApp:
             
             self.refresh_display()
 
-    # (显示逻辑保持不变)
+    # (显示逻辑)
     def refresh_display(self):
         if self.cv_img_original is None: return
         w, h = self.lbl_original.winfo_width(), self.lbl_original.winfo_height()
