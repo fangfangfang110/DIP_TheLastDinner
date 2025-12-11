@@ -1,4 +1,4 @@
-﻿import tkinter as tk
+import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import threading  # <--- 【新增】导入线程模块
 from PIL import Image, ImageTk, ImageDraw
@@ -6,9 +6,7 @@ import cv2
 import numpy as np
 import os
 from datetime import datetime
-
 import image_methods
-# zx到此一游 
 
 # =============================================================================
 # 交互式 ROI (区域) 选择器
@@ -479,6 +477,57 @@ class ImageProcessorApp:
                 "func": image_methods.gamma_correction,
                 "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
             },
+            "Laplacian特征融合": {
+                "func": image_methods.laplacian_pyramid_fusion,
+                "params": [
+                    {'key': 'b_base_h',      'label': '[蓝]底图-去噪强度h', 'default': 9.0},
+                    {'key': 'b_base_temp',   'label': '[蓝]底图-模板大小',   'default': 7, 'tip': '奇数'},
+                    {'key': 'b_base_search', 'label': '[蓝]底图-搜索大小',   'default': 21, 'tip': '奇数'},
+                    {'key': 'b_det_d',       'label': '[蓝]细节-双边直径d', 'default': 5, 'tip': '0为不处理'},
+                    {'key': 'b_det_sc',      'label': '[蓝]细节-双边色差Sigma', 'default': 30, 'tip': '0为不处理'},
+                    {'key': 'b_det_ss',      'label': '[蓝]细节-双边空间Sigma', 'default': 30, 'tip': '0为不处理'},
+                    {'key': 'b_w_l0',        'label': '[蓝]L0层权重',   'default': 0.2, 'tip': '噪点多则调小'},
+                    {'key': 'b_w_l1',        'label': '[蓝]L1层权重',   'default': 0.9},
+                    
+                    {'key': 'g_base_h',      'label': '[绿]底图-去噪强度h', 'default': 5.0},
+                    {'key': 'g_base_temp',   'label': '[绿]底图-模板大小',   'default': 7},
+                    {'key': 'g_base_search', 'label': '[绿]底图-搜索大小',   'default': 21},
+                    {'key': 'g_det_d',       'label': '[绿]细节-双边直径d', 'default': 5},
+                    {'key': 'g_det_sc',      'label': '[绿]细节-双边色差Sigma', 'default': 30},
+                    {'key': 'g_det_ss',      'label': '[绿]细节-双边空间Sigma', 'default': 30},
+                    {'key': 'g_w_l0',        'label': '[绿]L0层权重',   'default': 0.3},
+                    {'key': 'g_w_l1',        'label': '[绿]L1层权重',   'default': 1.2},
+                    
+                    {'key': 'r_base_h',      'label': '[红]底图-去噪强度h', 'default': 5.0},
+                    {'key': 'r_base_temp',   'label': '[红]底图-模板大小',   'default': 7},
+                    {'key': 'r_base_search', 'label': '[红]底图-搜索大小',   'default': 21},
+                    {'key': 'r_det_d',       'label': '[红]细节-双边直径d', 'default': 5},
+                    {'key': 'r_det_sc',      'label': '[红]细节-双边色差Sigma', 'default': 30},
+                    {'key': 'r_det_ss',      'label': '[红]细节-双边空间Sigma', 'default': 30},
+                    {'key': 'r_w_l0',        'label': '[红]L0层权重',   'default': 0.3},
+                    {'key': 'r_w_l1',        'label': '[红]L1层权重',   'default': 1.2},
+                ]
+            },
+            "Reinhard 快速色彩迁移": {
+                "func": image_methods.color_transfer_reinhard,
+                "params": [
+                    {"key": "ref_path", "label": "参考图路径", "default": "", "type": "file", "tip": "瞬间完成色彩风格模仿"}
+                ]
+            },
+            "SWD 风格迁移 (色彩同化)": {
+                "func": image_methods.color_transfer_swd,
+                "params": [
+                    {"key": "ref_path", "label": "参考图路径", "default": "", "type": "file", "tip": "选择一张你想模仿其色彩风格的图片"},
+                    {"key": "iter_count", "label": "迭代次数", "default": 30, "tip": "越大效果越明显但越慢"},
+                    {"key": "proj_count", "label": "投影数量", "default": 64, "tip": "建议 50-100"}
+                ]
+            },
+                "MKL 线性最优传输 (推荐)": {
+                "func": image_methods.color_transfer_mkl,
+                "params": [
+                    {"key": "ref_path", "label": "参考图路径", "default": "", "type": "file", "tip": "速度快且色彩还原度高"}
+                ]
+            },
             "色彩饱和度": {
                 "func": image_methods.color_saturation_boost,
                 "params": single("scale", "倍数", 1.3, "1.0为原图")
@@ -528,17 +577,6 @@ class ImageProcessorApp:
                     {"key": "omega_center", "label": "中心强度", "default": 0.98},
                     {"key": "omega_edge", "label": "边缘强度", "default": 0.60},
                     {"key": "radius", "label": "中心半径", "default": 0.60}
-                ]
-            },
-            "金字塔融合增强": {
-                "func": image_methods.laplacian_pyramid_fusion,
-                "params": [
-                    {"key": "b_base_h", "label": "[蓝]去噪h", "default": 9.0},
-                    {"key": "b_det_d", "label": "[蓝]细节d", "default": 5},
-                    {"key": "g_base_h", "label": "[绿]去噪h", "default": 5.0},
-                    {"key": "g_det_d", "label": "[绿]细节d", "default": 5},
-                    {"key": "r_base_h", "label": "[红]去噪h", "default": 5.0},
-                    {"key": "r_det_d", "label": "[红]细节d", "default": 5},
                 ]
             }
         }
