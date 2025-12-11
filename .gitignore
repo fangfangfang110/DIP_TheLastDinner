@@ -1,5 +1,7 @@
-# �ų�Visual Studio���ػ���
+# 排除Visual Studio本地缓存
 .vs/
-# �ų�Python���뻺�棨���У�
+# 排除Python编译缓存（若有）
 __pycache__/
 *.pyc
+# 排除本地测试图片输出文件夹
+process_out/
