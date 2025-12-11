@@ -1,4 +1,4 @@
-﻿import cv2
+import cv2
 import numpy as np
 import os
 from datetime import datetime
@@ -275,11 +275,23 @@ def _process_ch_laplacian_advanced(channel, ch_name, params, output_dir):
     return fused
 
 def laplacian_pyramid_fusion(image, **kwargs):
-    # 准备输出目录
-    time_str = datetime.now().strftime("%m%d_%H%M")
-    output_dir = f"{time_str}_lap_step_out"
-    if not os.path.exists(output_dir): os.makedirs(output_dir)
+    # 1. 准备输出目录 (调试用)
+    root_dir = "process_out"
+    if not os.path.exists(root_dir):
+        os.makedirs(root_dir)
 
+    date_str = datetime.now().strftime("%Y%m%d")
+    index = 1
+    # 循环查找当前日期下可用的序号，确保不覆盖
+    while True:
+        sub_dir_name = f"{date_str}_{index}_lap_step_out"
+        output_dir = os.path.join(root_dir, sub_dir_name)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            break
+        index += 1
+        
+    # 2. 转为浮点数进行计算 (0.0 - 1.0)
     img_float = image.astype(np.float32) / 255.0
     b, g, r = cv2.split(img_float)
     
@@ -296,16 +308,21 @@ def laplacian_pyramid_fusion(image, **kwargs):
             'w_l1': kwargs.get(f'{prefix}_w_l1', 1.0),
         }
 
-    b_out = _process_ch_laplacian_advanced(b, 'Blue', get_params('b'), output_dir)
-    g_out = _process_ch_laplacian_advanced(g, 'Green', get_params('g'), output_dir)
-    r_out = _process_ch_laplacian_advanced(r, 'Red', get_params('r'), output_dir)
+    # 3. 分通道处理 (这里调用了你上面定义的 _process_ch_laplacian_advanced)
+    # 注意：_process_ch_laplacian_advanced 返回的是 float32 (0.0-1.0)
+    b_fused = _process_ch_laplacian_advanced(b, 'Blue', get_params('b'), output_dir)
+    g_fused = _process_ch_laplacian_advanced(g, 'Green', get_params('g'), output_dir)
+    r_fused = _process_ch_laplacian_advanced(r, 'Red', get_params('r'), output_dir)
     
-    merged = cv2.merge([b_out, g_out, r_out])
-    res_uint8 = np.clip(merged * 255, 0, 255).astype(np.uint8)
-    _save_step_image(res_uint8, output_dir, "Final_Result.jpg")
+    # 4. 合并通道
+    merged = cv2.merge([b_fused, g_fused, r_fused])
+
+    # 将 Float(0-1) 转换为 Uint8(0-255)
+    # 强制转换为无符号8位整数 (astype uint8)
+    result = np.clip(merged * 255, 0, 255).astype(np.uint8)
     
-    print(f"过程文件已保存至: {output_dir}")
-    return res_uint8
+    return result
+
 
 def grabcut_interactive(image, rect, iter_count=5, **kwargs):
     """
@@ -583,3 +600,217 @@ def generate_local_mask(image, rect, points_relative, tolerance=20, **kwargs):
     full_mask[y:y+h, x:x+w] = accumulated_mask_roi
     
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+# =============================================================================
+# SWD 风格迁移 (新增)
+# =============================================================================
+def color_transfer_swd(image, ref_path, iter_count=30, proj_count=64, **kwargs):
+    """
+    Sliced Wasserstein Distance 色彩迁移
+    :param ref_path: 参考风格图片的路径
+    :param iter_count: 迭代次数 (建议 20-100)
+    :param proj_count: 投影数量 (建议 50-200)
+    """
+    # 1. 检查并读取参考图片
+    if not ref_path:
+        print("错误：未提供参考图片路径")
+        return image
+    
+    # 清理路径字符串
+    ref_path = str(ref_path).strip('"').strip("'")
+    
+    if not os.path.exists(ref_path):
+        print(f"错误：找不到参考图片 {ref_path}")
+        return image
+        
+    ref_img = cv2.imdecode(np.fromfile(ref_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if ref_img is None:
+        print("错误：无法读取参考图片")
+        return image
+
+    print(f"开始 SWD 风格迁移... Iterations={iter_count}, Projections={proj_count}")
+    
+    # 2. 预处理：转为 float32
+    target = image.astype(np.float32)
+    source = ref_img.astype(np.float32)
+    
+    h, w, c = target.shape
+    
+    # 展平像素 (N, 3)
+    X = target.reshape(-1, 3)
+    Y = source.reshape(-1, 3)
+    
+    iter_count = int(iter_count)
+    proj_count = int(proj_count)
+    
+    # 3. 核心迭代
+    for i in range(iter_count):
+        # 生成随机投影向量并归一化 (3, proj_count)
+        rand_mat = np.random.randn(3, proj_count).astype(np.float32)
+        rand_mat /= np.sqrt(np.sum(rand_mat**2, axis=0, keepdims=True) + 1e-8)
+        
+        # 投影
+        X_proj = np.dot(X, rand_mat)
+        Y_proj = np.dot(Y, rand_mat)
+        
+        # 排序索引
+        X_indices = np.argsort(X_proj, axis=0)
+        
+        # 对 Y 投影排序
+        Y_proj_sorted = np.sort(Y_proj, axis=0)
+        
+        # 重采样 Y 以匹配 X 的像素数量 (线性插值)
+        # 解决两张图尺寸不一致问题
+        Y_resampled = np.zeros_like(X_proj)
+        x_space = np.linspace(0, Y_proj.shape[0]-1, X_proj.shape[0])
+        y_space = np.arange(Y_proj.shape[0])
+        
+        for p in range(proj_count):
+            Y_resampled[:, p] = np.interp(x_space, y_space, Y_proj_sorted[:, p])
+            
+        # 计算当前 X 的排序投影
+        X_proj_sorted = np.sort(X_proj, axis=0)
+        
+        # 计算差异
+        diff = Y_resampled - X_proj_sorted
+        
+        # 将差异按原 X 的顺序重新排列
+        diff_reordered = np.zeros_like(diff)
+        for p in range(proj_count):
+            diff_reordered[X_indices[:, p], p] = diff[:, p]
+            
+        # 反投影更新 X
+        X_update = np.dot(diff_reordered, rand_mat.T)
+        
+        # 均值更新 (带简单的学习率调节)
+        X += X_update / (proj_count / 3.0) # 这里的除数系数可作为平滑项
+        
+    print("SWD 处理完成")
+    
+    # 4. 重组并返回
+    res_img = X.reshape(h, w, c)
+    return np.clip(res_img, 0, 255).astype(np.uint8)
+
+# =============================================================================
+# 快速色彩迁移 (Reinhard算法)
+# =============================================================================
+def color_transfer_reinhard(image, ref_path, **kwargs):
+    """
+    Reinhard 极速色彩迁移 (基于统计学)
+    比 SWD 快非常多，适合实时处理
+    """
+    # 1. 检查参考图
+    if not ref_path: return image
+    ref_path = str(ref_path).strip('"').strip("'")
+    if not os.path.exists(ref_path):
+        print(f"错误：找不到参考图片 {ref_path}")
+        return image
+        
+    ref_img = cv2.imdecode(np.fromfile(ref_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if ref_img is None: return image
+
+    # 2. 转换到 LAB 空间 (浮点数运算以保证精度)
+    # LAB 空间将亮度(L)和色彩(A, B)分离，最适合做色彩迁移
+    source = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    target = cv2.cvtColor(ref_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+    # 3. 计算均值和标准差
+    # source: 原图, target: 参考风格图
+    (l_mean_src, l_std_src) = cv2.meanStdDev(source)
+    (l_mean_tar, l_std_tar) = cv2.meanStdDev(target)
+
+    # 展平以便广播计算
+    l_mean_src = l_mean_src.flatten()
+    l_std_src = l_std_src.flatten()
+    l_mean_tar = l_mean_tar.flatten()
+    l_std_tar = l_std_tar.flatten()
+
+    # 4. 执行色彩变换公式
+    # 核心公式: Result = (Original - Mean_Src) * (Std_Tar / Std_Src) + Mean_Tar
+    # 加上 1e-6 防止除以零
+    result_lab = (source - l_mean_src) * (l_std_tar / (l_std_src + 1e-6)) + l_mean_tar
+
+    # 5. 限制范围并转回 BGR
+    result_lab = np.clip(result_lab, 0, 255).astype(np.uint8)
+    result_bgr = cv2.cvtColor(result_lab, cv2.COLOR_LAB2BGR)
+    
+    return result_bgr
+
+# =============================================================================
+# MKL 线性最优传输 (比 Reinhard 更精准，比 SWD 更快)
+# =============================================================================
+def color_transfer_mkl(image, ref_path, **kwargs):
+    """
+    Monge-Kantorovich Linear (MKL) 色彩迁移
+    基于最优传输理论，考虑了颜色通道之间的相关性(协方差)，
+    效果通常优于 Reinhard，且速度很快。
+    """
+    # 1. 检查参考图
+    if not ref_path: return image
+    ref_path = str(ref_path).strip('"').strip("'")
+    if not os.path.exists(ref_path):
+        print(f"错误：找不到参考图片 {ref_path}")
+        return image
+        
+    ref_img = cv2.imdecode(np.fromfile(ref_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if ref_img is None: return image
+
+    # 2. 预处理 (保持 RGB 空间即可，或者转 LAB 也可以，MKL 对色彩空间不敏感)
+    # 为了计算协方差，我们需要 shape 为 (N, 3) 的 float32
+    X = image.astype(np.float32) / 255.0
+    Y = ref_img.astype(np.float32) / 255.0
+    
+    h, w, c = X.shape
+    X = X.reshape(-1, 3)
+    Y = Y.reshape(-1, 3)
+
+    # 3. 计算均值和协方差矩阵
+    mu_x = np.mean(X, axis=0)
+    mu_y = np.mean(Y, axis=0)
+    
+    # rowvar=False 表示每一列是一个变量(R,G,B)
+    cov_x = np.cov(X, rowvar=False)
+    cov_y = np.cov(Y, rowvar=False)
+
+    # 4. 计算最优传输映射矩阵 T
+    # 公式: T = A^(-1/2) * (A^(1/2) * B * A^(1/2))^(1/2) * A^(-1/2)
+    # 其中 A = cov_x, B = cov_y
+    # 为了计算矩阵平方根，使用 Eigendecomposition (特征分解)
+    
+    def matrix_sqrt(M):
+        # 特征分解 M = V * D * V_inv
+        eigval, eigvec = np.linalg.eigh(M)
+        # 剔除极小的负特征值(数值误差)
+        eigval = np.maximum(eigval, 0)
+        # 构造 D^(1/2)
+        D_sqrt = np.diag(np.sqrt(eigval))
+        # 重组 M^(1/2) = V * D^(1/2) * V.T
+        return eigvec @ D_sqrt @ eigvec.T
+
+    def matrix_inv_sqrt(M):
+        eigval, eigvec = np.linalg.eigh(M)
+        eigval = np.maximum(eigval, 1e-6) # 防止除零
+        D_inv_sqrt = np.diag(1.0 / np.sqrt(eigval))
+        return eigvec @ D_inv_sqrt @ eigvec.T
+
+    # 步骤拆解
+    cov_x_sqrt = matrix_sqrt(cov_x)
+    cov_x_inv_sqrt = matrix_inv_sqrt(cov_x)
+    
+    # 中间项: (cov_x_sqrt @ cov_y @ cov_x_sqrt)
+    mid_term = cov_x_sqrt @ cov_y @ cov_x_sqrt
+    mid_term_sqrt = matrix_sqrt(mid_term)
+    
+    # 最终变换矩阵 M
+    M = cov_x_inv_sqrt @ mid_term_sqrt @ cov_x_inv_sqrt
+
+    # 5. 应用变换
+    # X_new = (X - mu_x) @ M + mu_y
+    X_centered = X - mu_x
+    X_transformed = X_centered @ M + mu_y
+
+    # 6. 后处理
+    result = X_transformed.reshape(h, w, c)
+    result = np.clip(result * 255, 0, 255).astype(np.uint8)
+    
+    return result
