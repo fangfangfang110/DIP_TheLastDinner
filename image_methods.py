@@ -583,3 +583,49 @@ def generate_local_mask(image, rect, points_relative, tolerance=20, **kwargs):
     full_mask[y:y+h, x:x+w] = accumulated_mask_roi
     
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+def generate_inverse_local_mask(image, rect, points_relative, tolerance=20, **kwargs):
+    """
+    局部掩码生成 (反向/排除):
+    在选中区域内，将【不符合】用户选取点色彩范围的像素设为白色，符合的设为黑色。
+    即：反向提取背景或异常点。
+    """
+    # 1. 复用原有逻辑计算正向掩码
+    # 我们先调用现有的函数或者复用代码生成“符合颜色”的掩码
+    # 为了保持独立性，建议直接复制 generate_local_mask 的代码并修改中间一步
+    
+    if rect is None or not points_relative:
+        return image
+
+    x, y, w, h = rect
+    roi = image[y:y+h, x:x+w]
+    
+    accumulated_mask_roi = np.zeros(roi.shape[:2], dtype=np.uint8)
+    tol = float(tolerance)
+
+    if not isinstance(points_relative, list):
+        points_relative = [points_relative]
+
+    for (px, py) in points_relative:
+        if px < 0 or px >= w or py < 0 or py >= h:
+            continue
+            
+        seed_color = roi[py, px]
+        
+        lower_bound = np.clip(seed_color - tol, 0, 255).astype(np.uint8)
+        upper_bound = np.clip(seed_color + tol, 0, 255).astype(np.uint8)
+        
+        mask_i = cv2.inRange(roi, lower_bound, upper_bound)
+        accumulated_mask_roi = cv2.bitwise_or(accumulated_mask_roi, mask_i)
+    
+    # === 【修改核心】 ===
+    # 此时 accumulated_mask_roi 中，符合颜色的点是白色的。
+    # 我们需要取反：符合颜色变黑(0)，不符合变白(255)。
+    inverse_mask_roi = cv2.bitwise_not(accumulated_mask_roi)
+    # ==================
+    
+    full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    # 将取反后的掩码放入全图
+    full_mask[y:y+h, x:x+w] = inverse_mask_roi
+    
+    return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)

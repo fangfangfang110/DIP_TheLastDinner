@@ -417,13 +417,14 @@ class ImageProcessorApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def _init_methods_config(self):
+        # 辅助函数：快速生成单参数配置
         def single(key, label, default, tip=""):
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
             "交互式透视变换校正": {
                 "func": image_methods.perspective_correction,
-                "interactive_points": True, 
+                "interactive_points": True,
                 "params": [
                     {"key": "target_width", "label": "输出宽度(0自动)", "default": 0, "tip": "若0则自动计算"},
                     {"key": "target_height", "label": "输出高度(0自动)", "default": 0, "tip": "例如1000"}
@@ -432,7 +433,7 @@ class ImageProcessorApp:
             "转灰度图": {
                 "func": image_methods.to_gray,
                 "params": [{"key": "dummy", "label": "无需参数", "default": 1}]
-                },
+            },
             "GrabCut 交互式抠图": {
                 "func": image_methods.grabcut_interactive,
                 "interactive_roi": True,
@@ -440,7 +441,7 @@ class ImageProcessorApp:
             },
             "区域修补 (指定Mask图片)": {
                 "func": image_methods.restoration_idw_external_mask,
-                "interactive_roi": True,  
+                "interactive_roi": True,
                 "params": [
                     {"key": "mask_path", "label": "二值图路径", "default": "", "type": "file", "tip": "选择处理好的黑白二值图"},
                     {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
@@ -448,37 +449,98 @@ class ImageProcessorApp:
             },
             "形态学边缘检测": {
                 "func": image_methods.morph_edge_detection,
-                "params": [{"key": "kernel_size", "label": "线条粗细", "default": 3}, {"key": "mode", "label": "检测模式", "default": 0, "tip": "0=标准, 1=外边缘, 2=内边缘"}]
+                "params": [
+                    {"key": "kernel_size", "label": "线条粗细", "default": 3},
+                    {"key": "mode", "label": "检测模式", "default": 0, "tip": "0=标准, 1=外边缘, 2=内边缘"}
+                ]
             },
             "二值化处理 (黑白)": {
                 "func": image_methods.binary_threshold,
-                "params": [{"key": "thresh_val", "label": "阈值(模式0)", "default": 127}, {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}]
+                "params": [
+                    {"key": "thresh_val", "label": "阈值(模式0)", "default": 127},
+                    {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}
+                ]
             },
             "局部掩码生成 (颜色阈值)": {
                 "func": image_methods.generate_local_mask,
-                "roi_and_point": True,  # 【自定义标记】表示需要先框选ROI，再取点
+                "roi_and_point": True,
                 "params": [
                     {"key": "tolerance", "label": "容差范围", "default": 20, "tip": "颜色浮动范围 (0-255)"}
                 ]
             },
+            "局部掩码生成 (反向排除)": {
+                "func": image_methods.generate_inverse_local_mask,
+                "roi_and_point": True,  # 复用相同的交互逻辑：先框选 ROI，再取点
+                "params": [
+                    {"key": "tolerance", "label": "排除容差", "default": 20, "tip": "容差内的颜色将被剔除(变黑)"}
+                ]
+            },
             "Gamma 亮度校正": {
                 "func": image_methods.gamma_correction,
-               "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
+                "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
             },
-            "色彩饱和度": {"func": image_methods.color_saturation_boost, "params": single("scale", "倍数", 1.3, "1.0为原图")},
-            "CLAHE 对比度增强": {"func": image_methods.clahe_enhance, "params": single("clip_limit", "Clip Limit", 3.0)},
-            "形态学对比度": {"func": image_methods.morph_contrast_enhance, "params": single("kernel_size", "核大小", 15)},
-            "USM 智能锐化": {"func": image_methods.unsharp_mask, "params": [{"key": "sigma", "label": "半径", "default": 2.0}, {"key": "amount", "label": "强度", "default": 1.5}]},
-            "双边滤波降噪": {"func": image_methods.bilateral_filter_denoise, "params": [{"key": "d", "label": "直径", "default": 9}, {"key": "sigma", "label": "强度", "default": 75}]},
-            "色度降噪": {"func": image_methods.chroma_denoise, "params": single("kernel_size", "核大小", 21)},
-            "NLM 强力降噪": {"func": image_methods.nlm_denoise_colored, "params": [{"key": "h", "label": "亮度强度", "default": 10}, {"key": "h_color", "label": "色彩强度", "default": 10}, {"key": "templateWindowSize", "label": "模板大小", "default": 7}, {"key": "searchWindowSize", "label": "搜索大小", "default": 21}]},
-            "暗通道去雾": {"func": image_methods.dehaze_dcp, "params": single("omega", "去雾程度", 0.95)},
-            "暗通道去雾 (局部)": {"func": image_methods.dehaze_dcp_spatial, "params": [{"key": "omega_center", "label": "中心强度", "default": 0.98}, {"key": "omega_edge", "label": "边缘强度", "default": 0.60}, {"key": "radius", "label": "中心半径", "default": 0.60}]},
-            "金字塔融合增强": {"func": image_methods.laplacian_pyramid_fusion, "params": [
-                     {'key': 'b_base_h', 'label': '[蓝]去噪h', 'default': 9.0}, {'key': 'b_det_d', 'label': '[蓝]细节d', 'default': 5},
-                     {'key': 'g_base_h', 'label': '[绿]去噪h', 'default': 5.0}, {'key': 'g_det_d', 'label': '[绿]细节d', 'default': 5},
-                     {'key': 'r_base_h', 'label': '[红]去噪h', 'default': 5.0}, {'key': 'r_det_d', 'label': '[红]细节d', 'default': 5},
-            ]}
+            "色彩饱和度": {
+                "func": image_methods.color_saturation_boost,
+                "params": single("scale", "倍数", 1.3, "1.0为原图")
+            },
+            "CLAHE 对比度增强": {
+                "func": image_methods.clahe_enhance,
+                "params": single("clip_limit", "Clip Limit", 3.0)
+            },
+            "形态学对比度": {
+                "func": image_methods.morph_contrast_enhance,
+                "params": single("kernel_size", "核大小", 15)
+            },
+            "USM 智能锐化": {
+                "func": image_methods.unsharp_mask,
+                "params": [
+                    {"key": "sigma", "label": "半径", "default": 2.0},
+                    {"key": "amount", "label": "强度", "default": 1.5}
+                ]
+            },
+            "双边滤波降噪": {
+                "func": image_methods.bilateral_filter_denoise,
+                "params": [
+                    {"key": "d", "label": "直径", "default": 9},
+                    {"key": "sigma", "label": "强度", "default": 75}
+                ]
+            },
+            "色度降噪": {
+                "func": image_methods.chroma_denoise,
+                "params": single("kernel_size", "核大小", 21)
+            },
+            "NLM 强力降噪": {
+                "func": image_methods.nlm_denoise_colored,
+                "params": [
+                    {"key": "h", "label": "亮度强度", "default": 10},
+                    {"key": "h_color", "label": "色彩强度", "default": 10},
+                    {"key": "templateWindowSize", "label": "模板大小", "default": 7},
+                    {"key": "searchWindowSize", "label": "搜索大小", "default": 21}
+                ]
+            },
+            "暗通道去雾": {
+                "func": image_methods.dehaze_dcp,
+                "params": single("omega", "去雾程度", 0.95)
+            },
+            "暗通道去雾 (局部)": {
+                "func": image_methods.dehaze_dcp_spatial,
+                "params": [
+                    {"key": "omega_center", "label": "中心强度", "default": 0.98},
+                    {"key": "omega_edge", "label": "边缘强度", "default": 0.60},
+                    {"key": "radius", "label": "中心半径", "default": 0.60}
+                ]
+            },
+            "金字塔融合增强": {
+                "func": image_methods.laplacian_pyramid_fusion,
+                "params": [
+                    {"key": "b_base_h", "label": "[蓝]去噪h", "default": 9.0},
+                    {"key": "b_det_d", "label": "[蓝]细节d", "default": 5},
+                    {"key": "g_base_h", "label": "[绿]去噪h", "default": 5.0},
+                    {"key": "g_det_d", "label": "[绿]细节d", "default": 5},
+                    {"key": "r_base_h", "label": "[红]去噪h", "default": 5.0},
+                    {"key": "r_det_d", "label": "[红]细节d", "default": 5},
+                ]
+            }
         }
 
     def setup_ui(self):
