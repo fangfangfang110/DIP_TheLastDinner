@@ -1,5 +1,6 @@
 ﻿import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+import threading  # <--- 【新增】导入线程模块
 from PIL import Image, ImageTk, ImageDraw
 import cv2
 import numpy as np
@@ -533,6 +534,11 @@ class ImageProcessorApp:
 
         log_frame = tk.LabelFrame(frame_left, text="实时操作记录", font=("bold", 9))
         log_frame.pack(fill=tk.X, side=tk.BOTTOM, padx=5, pady=5)
+        # === 【新增】进度条组件 ===
+        # mode='indeterminate' 表示不确定进度（来回滚动），适合 OpenCV 这种无法预知剩余时间的操作
+        self.progress_bar = ttk.Progressbar(log_frame, mode='indeterminate', length=200)
+        self.progress_bar.pack(fill=tk.X, padx=2, pady=(0, 5), side=tk.BOTTOM)
+        # ========================
         self.log_text = tk.Text(log_frame, height=18, width=25, state=tk.DISABLED, font=("Consolas", 8), bg="#f5f5f5")
         self.log_text.pack(fill=tk.BOTH, padx=2, pady=2)
 
@@ -627,41 +633,40 @@ class ImageProcessorApp:
         self.refresh_display()
 
     def apply_method(self, method_name):
+        # 1. 基础检查（保留）
         if self.cv_img_original is None:
             messagebox.showwarning("提示", "请先打开图片")
             return
             
         config = self.methods_config[method_name]
 
+        # =========================================================
+        # 第一阶段：UI 交互部分
+        # (这部分代码完全照搬原来的，负责获取用户输入)
+        # =========================================================
         rect_roi = None
         points = None
-        point_relative = None
-        points_relative = None
+        points_relative = None # 这是一个列表
 
+        # 情况A: ROI + 取点
         if config.get("roi_and_point", False):
-            # 步骤1: 先框选 ROI
             selector_roi = ROISelector(self.root, self.cv_img_original, title="第一步：请框选要处理的区域")
             if selector_roi.result_rect is None:
                 self.log_operation(f"❌ 取消操作: {method_name}")
                 return 
             rect_roi = selector_roi.result_rect
             
-            # 步骤2: 在 ROI 中取点 (支持多点)
             x, y, w, h = rect_roi
             roi_img = self.cv_img_original[y:y+h, x:x+w]
             selector_pixel = PixelSelector(self.root, roi_img, title="第二步：请点击目标颜色的像素 (可多选)")
             
-            # 【修改点】判断列表是否为空
             if not selector_pixel.result_points:
                 self.log_operation(f"❌ 取消操作: {method_name}")
                 return
-            
-            # 【修改点】保存为 points_relative 列表
             points_relative = selector_pixel.result_points
-            
             self.log_operation(f"🖱️ 区域+取点确定: ROI={rect_roi}, PointsCount={len(points_relative)}")
 
-        # 1. 交互式选框 (ROI Selector)
+        # 情况B: 仅 ROI
         elif config.get("interactive_roi", False):
             selector = ROISelector(self.root, self.cv_img_original)
             if selector.result_rect is None:
@@ -670,7 +675,7 @@ class ImageProcessorApp:
             rect_roi = selector.result_rect
             self.log_operation(f"🖱️ 选区确定: {rect_roi}")
 
-        # 2. 交互式选点 (Point Selector)
+        # 情况C: 仅四点透视
         if config.get("interactive_points", False):
             selector = PointSelector(self.root, self.cv_img_original)
             if selector.result_points is None:
@@ -679,40 +684,70 @@ class ImageProcessorApp:
             points = selector.result_points
             self.log_operation(f"🖱️ 四点确定: {points.tolist()}")
        
-        # 3. 参数输入
+        # 参数弹窗
         history = self.param_history.get(method_name, {})
         dialog = MultiParamDialog(self.root, f"参数: {method_name}", config["params"], history_values=history)
         if dialog.result_data is None: return 
         
         params = dialog.result_data
         
-        ui_msg = f"🚀 正在执行: {method_name}\n   参数: {params}"
-        self.log_operation(ui_msg)
+        # =========================================================
+        # 第二阶段：线程准备与启动
+        # (这里是修改的核心：不再直接运行，而是打包给线程)
+        # =========================================================
         
-        try:
-            img_in = self.cv_img_original.copy()
-            kwargs = params.copy()
+        # 1. 更新 UI 状态：显示“正在处理”，让鼠标转圈，启动进度条
+        ui_msg = f"🚀 正在后台执行: {method_name}..."
+        self.log_operation(ui_msg)
+        self.root.config(cursor="watch")      # 鼠标变成沙漏/忙碌状态
+        self.progress_bar.pack(fill=tk.X, padx=2, pady=(0, 5), side=tk.BOTTOM) # 显示进度条
+        self.progress_bar.start(10)           # 进度条开始跑动
+        
+        # 2. 准备数据 (主线程的数据要在此时复制一份，防止线程冲突)
+        img_in = self.cv_img_original.copy()
+        kwargs = params.copy()
+        
+        # 把刚才交互获取到的坐标塞进去
+        if rect_roi: kwargs['rect'] = rect_roi
+        if points is not None: kwargs['points'] = points
+        if points_relative is not None: kwargs['points_relative'] = points_relative
 
-            # 传入收集到的交互数据
-            # 在 try 块内部构造 kwargs 时：
-            if rect_roi: kwargs['rect'] = rect_roi
-            if points is not None: kwargs['points'] = points
-            # 【修改点】传递列表
-            if points_relative is not None: kwargs['points_relative'] = points_relative
+        # 3. 定义后台干活的工人 (Worker)
+        def worker_thread():
+            try:
+                # --- 这里是最耗时的步骤 ---
+                res = config["func"](img_in, **kwargs)
                 
-            res = config["func"](img_in, **kwargs)
-            self.cv_img_processed = res
-            self.param_history[method_name] = params 
-            
-            self.refresh_display()
-            self.log_operation(f"🎉 预览成功: {method_name}")
-            
-            self.pending_log_entry = f"应用算法: [{method_name}] | 参数: {params}"
-            
-        except Exception as e:
-            messagebox.showerror("算法错误", str(e))
-            self.log_operation(f"❌ 失败: {str(e)}")
+                # --- 算完后，告诉主线程 (成功) ---
+                # 注意：不能在这里直接 self.cv_img_processed = res，必须用 root.after
+                self.root.after(0, lambda: self.on_processing_finished(res, method_name, params, None))
+                
+            except Exception as e:
+                # --- 出错后，告诉主线程 (失败) ---
+                self.root.after(0, lambda: self.on_processing_finished(None, method_name, params, str(e)))
+
+        # 4. 启动线程
+        t = threading.Thread(target=worker_thread)
+        t.daemon = True # 设置守护线程，主程序关闭时它也会自动停止
+        t.start()
+
+    # === 【新增】任务完成后的回调函数 ===
+    def on_processing_finished(self, result_image, method_name, params, error_msg=None):
+        """此函数由主线程调用，用于更新 UI"""
+        self.progress_bar.stop()          # 停止动画
+        self.progress_bar.pack_forget()   # 隐藏进度条 (或者不隐藏，看你喜好)
+        self.root.config(cursor="")       # 恢复鼠标指针
+
+        if error_msg:
+            messagebox.showerror("算法错误", error_msg)
+            self.log_operation(f"❌ 失败: {error_msg}")
             self.pending_log_entry = None
+        else:
+            self.cv_img_processed = result_image
+            self.param_history[method_name] = params
+            self.refresh_display()
+            self.log_operation(f"🎉 处理完成: {method_name}")
+            self.pending_log_entry = f"应用算法: [{method_name}] | 参数: {params}"
 
     def save_image(self):
         if self.cv_img_processed is None: return
