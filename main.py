@@ -1019,7 +1019,9 @@ class ImageProcessorApp:
                 
             except Exception as e:
                 # --- 出错后，告诉主线程 (失败) ---
-                self.root.after(0, lambda: self.on_processing_finished(None, method_name, params, str(e)))
+                err_msg = str(e) 
+                self.root.after(0, lambda: self.on_processing_finished(None, method_name, params, err_msg))
+                # self.root.after(0, lambda: self.on_processing_finished(None, method_name, params, str(e)))
 
         # 4. 启动线程
         t = threading.Thread(target=worker_thread)
