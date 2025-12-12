@@ -430,6 +430,34 @@ class ImageProcessorApp:
                     {"key": "mode", "label": "填充模式", "default": 1, "tip": "0=纯黑, 1=镜像(推荐), 2=复制边缘"}
                 ]
             },
+            "画布扩展 (统计学生成)": {
+                "func": image_methods.canvas_expand_inpaint,
+                "params": [
+                    {"key": "pad_top", "label": "上边距", "default": 50},
+                    {"key": "pad_bottom", "label": "下边距", "default": 50},
+                    {"key": "pad_left", "label": "左边距", "default": 50},
+                    {"key": "pad_right", "label": "右边距", "default": 50},
+                    {"key": "method", "label": "算法", "default": 1, "tip": "0=Navier-Stokes(流体), 1=Telea(快速行进)"},
+                    {"key": "radius", "label": "采样半径", "default": 3.0, "tip": "建议 3-10，太大容易糊"}
+                ]
+            },
+            "画布裁剪 (ROI选取)": {
+                "func": image_methods.canvas_crop,
+                "interactive_roi": True,  # <--- 关键：开启这个开关，就会自动弹出选框工具
+                "params": [
+                    # 这里放一个占位参数即可，因为核心数据是靠鼠标框选的 rect 传入的
+                    {"key": "dummy", "label": "操作提示", "default": 0, "tip": "点击确定后，请在弹出的窗口中框选保留区域"}
+                ]
+            },
+            "画布裁剪 (指定边距)": {
+                "func": image_methods.canvas_crop_margin,
+                "params": [
+                    {"key": "crop_top", "label": "顶部裁剪像素", "default": 0},
+                    {"key": "crop_bottom", "label": "底部裁剪像素", "default": 0},
+                    {"key": "crop_left", "label": "左侧裁剪像素", "default": 0},
+                    {"key": "crop_right", "label": "右侧裁剪像素", "default": 0}
+                ]
+            },
             "交互式透视变换校正": {
                 "func": image_methods.perspective_correction,
                 "interactive_points": True,

@@ -81,6 +81,106 @@ def canvas_expand(image, pad_top=200, pad_bottom=200, pad_left=200, pad_right=20
     return cv2.copyMakeBorder(image, t, b, l, r, border_type, value=(0, 0, 0))
 
 # =============================================================================
+# 统计学填充算法 (Navier-Stokes / Telea)
+# =============================================================================
+
+def canvas_expand_inpaint(image, pad_top=50, pad_bottom=50, pad_left=50, pad_right=50, method=1, radius=3, **kwargs):
+    """
+    使用统计学算法 (Inpainting) 扩展画布。
+    原理：基于流体动力学或快速行进算法，将边缘像素向外推算。
+    注意：此算法计算量大，大范围扩展(>100px)会非常慢且模糊，仅建议用于小范围修补。
+    
+    :param method: 0=Navier-Stokes (流体动力学), 1=Telea (快速行进法, 推荐)
+    :param radius: 采样半径，越大越平滑但越慢
+    """
+    t, b, l, r = int(pad_top), int(pad_bottom), int(pad_left), int(pad_right)
+    method = int(method)
+    radius = float(radius)
+    
+    # 1. 扩展画布 (先填充黑色作为底板)
+    # 我们需要先制造出“空缺”，才能让算法去填补
+    expanded_img = cv2.copyMakeBorder(image, t, b, l, r, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    
+    # 2. 制作掩码 (Mask)
+    # 掩码中：白色(255)代表需要算法修补的区域(即新扩展的边框)，黑色(0)代表原图保持不动
+    # 先创建一个和扩展后图片一样大的全黑掩码
+    mask = np.zeros(expanded_img.shape[:2], dtype=np.uint8)
+    
+    # 将边框区域设为白色
+    # 逻辑：整体填白 -> 中间挖黑
+    mask[:, :] = 255
+    h_orig, w_orig = image.shape[:2]
+    # 将原图所在的中间区域设为黑色 (不修补)
+    mask[t:t+h_orig, l:l+w_orig] = 0
+    
+    # 3. 选择算法标志位
+    # cv2.INPAINT_NS = Navier-Stokes (基于流体物理，适合长线条纹理)
+    # cv2.INPAINT_TELEA = Alexandru Telea (基于快速行进，通常速度更快，效果更圆润)
+    flags = cv2.INPAINT_TELEA if method == 1 else cv2.INPAINT_NS
+    
+    print(f"正在进行统计学填充 (算法模式: {'Telea' if method==1 else 'Navier-Stokes'})... 请耐心等待")
+    
+    # 4. 执行修复 (核心步骤)
+    # 这一步在 Python 中是单线程的，大图可能会卡顿几秒
+    res = cv2.inpaint(expanded_img, mask, radius, flags)
+    
+    return res
+
+# =============================================================================
+# 画布裁剪
+# =============================================================================
+
+def canvas_crop(image, rect=None, **kwargs):
+    """
+    根据选区裁剪画布
+    :param rect: (x, y, w, h) 由交互式工具传入
+    """
+    if rect is None:
+        return image
+        
+    x, y, w, h = rect
+    
+    # 执行裁剪 (利用 Numpy 切片)
+    # 增加安全检查，防止切片越界或为空
+    if w <= 0 or h <= 0:
+        return image
+        
+    cropped = image[y:y+h, x:x+w]
+    
+    # 二次检查结果是否有效
+    if cropped.size == 0:
+        return image
+        
+    return cropped
+
+def canvas_crop_margin(image, crop_top=0, crop_bottom=0, crop_left=0, crop_right=0, **kwargs):
+    """
+    根据输入的边距数值裁剪画布
+    """
+    h, w = image.shape[:2]
+    c_t = int(crop_top)
+    c_b = int(crop_bottom)
+    c_l = int(crop_left)
+    c_r = int(crop_right)
+
+    # 1. 安全检查：防止裁剪数值过大导致图片消失
+    # 如果裁剪量超过或等于图片尺寸，则不执行任何操作并返回原图
+    if c_t + c_b >= h or c_l + c_r >= w:
+        print(f"错误：裁剪量过大 (高{h} vs 裁{c_t+c_b}, 宽{w} vs 裁{c_l+c_r})")
+        return image
+
+    # 2. 执行切片
+    # 注意：Python切片是 [start:end]，所以底部和右侧需要用总长减去裁剪量
+    y_end = h - c_b
+    x_end = w - c_r
+    
+    # 确保坐标不为负数 (虽然上面的检查已经涵盖了，但为了稳健性再做一次 max)
+    y_start = max(0, c_t)
+    x_start = max(0, c_l)
+    
+    return image[y_start:y_end, x_start:x_end]
+
+# =============================================================================
 # 增强与锐化
 # =============================================================================
 
