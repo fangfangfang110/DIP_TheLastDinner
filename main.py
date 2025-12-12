@@ -1,4 +1,4 @@
-import tkinter as tk
+﻿import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import threading  # <--- 【新增】导入线程模块
 from PIL import Image, ImageTk, ImageDraw
@@ -445,6 +445,8 @@ class ImageProcessorApp:
                     {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
                 ]
             },
+            
+
             "形态学边缘检测": {
                 "func": image_methods.morph_edge_detection,
                 "params": [
@@ -508,6 +510,27 @@ class ImageProcessorApp:
                     {'key': 'r_w_l1',        'label': '[红]L1层权重',   'default': 1.2},
                 ]
             },
+            "Laplacian: 提取特征": {
+                "func": image_methods.laplacian_extract_save,
+                "params": [
+                    {"key": "levels", "label": "提取层数", "default": 3, "tip": "层数越多，分离出的低频信息越少"}
+                ]
+            },
+            "Laplacian: 注入特征(恢复细节)": {
+                "func": image_methods.laplacian_inject_layer,
+                "params": [
+                    {"key": "layer_path", "label": "特征层文件", "default": "", "type": "file", "tip": "选择 process 文件夹下保存的 Level_x.png"},
+                    {"key": "strength", "label": "注入强度", "default": 1.0, "tip": "1.0=还原, >1=锐化, 负数=模糊"}
+                ]
+            },
+            "拉普拉斯: 多层自定义融合": {
+                "func": image_methods.laplacian_inject_multilevel,
+                "params": [
+                    {"key": "anchor_path", "label": "特征定位", "default": "", "type": "file", "tip": "进入特征文件夹，选中任意一个Level文件即可"},
+                    {"key": "weights_str", "label": "各层权重", "default": "1.0, 0.5, 0.2", "tip": "逗号分隔，分别对应第0层、第1层、第2层..."}
+                ]
+            },
+            
             "Reinhard 快速色彩迁移": {
                 "func": image_methods.color_transfer_reinhard,
                 "params": [
@@ -574,8 +597,8 @@ class ImageProcessorApp:
             "暗通道去雾 (局部)": {
                 "func": image_methods.dehaze_dcp_spatial,
                 "params": [
-                    {"key": "omega_center", "label": "中心强度", "default": 0.98},
-                    {"key": "omega_edge", "label": "边缘强度", "default": 0.60},
+                    {"key": "omega_center", "label": "中心强度", "default": 0.7},
+                    {"key": "omega_edge", "label": "边缘强度", "default": 0.30},
                     {"key": "radius", "label": "中心半径", "default": 0.60}
                 ]
             }

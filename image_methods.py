@@ -1,4 +1,4 @@
-import cv2
+﻿import cv2
 import numpy as np
 import os
 from datetime import datetime
@@ -600,6 +600,165 @@ def generate_local_mask(image, rect, points_relative, tolerance=20, **kwargs):
     full_mask[y:y+h, x:x+w] = accumulated_mask_roi
     
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+# =============================================================================
+# 拉普拉斯金字塔：拆解功能 (提取保存 & 细节回注)
+# =============================================================================
+
+def laplacian_extract_save(image, levels=3, **kwargs):
+    """
+    提取拉普拉斯金字塔各层并保存为文件
+    :param levels: 金字塔层数
+    """
+    # 1. 准备输出目录
+    root_dir = "process"
+    if not os.path.exists(root_dir): os.makedirs(root_dir)
+
+    date_str = datetime.now().strftime("%Y%m%d")
+    index = 1
+    while True:
+        # 文件夹命名：Extract_Laplacian
+        sub_dir_name = f"{date_str}_{index}_Extract_Laplacian"
+        output_dir = os.path.join(root_dir, sub_dir_name)
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+            break
+        index += 1
+
+    print(f"正在提取特征，保存至: {output_dir}")
+    
+    # 2. 转换数据类型
+    current_img = image.astype(np.float32)
+    
+    for i in range(int(levels)):
+        # 下采样
+        down = cv2.pyrDown(current_img)
+        # 上采样恢复尺寸
+        up = cv2.pyrUp(down, dstsize=(current_img.shape[1], current_img.shape[0]))
+        
+        # 计算拉普拉斯层 (细节 = 原图 - 模糊图)
+        laplacian = current_img - up
+        
+        # 3. 保存细节层
+        # 关键技巧：拉普拉斯层包含负数。
+        # 为了保存为可见且可逆的图片，我们使用“线性光”逻辑：将 0 映射为 128 (中性灰)
+        # 保存公式: uint8 = float + 128
+        save_img = np.clip(laplacian + 128.0, 0, 255).astype(np.uint8)
+        
+        filename = f"Level_{i}_HighFreq.png" # 使用 png 无损格式以保证精度
+        cv2.imwrite(os.path.join(output_dir, filename), save_img)
+        
+        # 准备下一层
+        current_img = down
+        
+    # 保存最后的残差层 (Base)
+    base_img = np.clip(current_img, 0, 255).astype(np.uint8)
+    cv2.imwrite(os.path.join(output_dir, f"Level_{int(levels)}_Base.png"), base_img)
+    
+    print(f"提取完成，共 {int(levels)} 层细节 + 1 层底图")
+    # 返回原图，不改变当前显示
+    return image
+
+
+def laplacian_inject_layer(image, layer_path, strength=1.0, **kwargs):
+    """
+    注入拉普拉斯特征层 (细节恢复)
+    :param layer_path: 之前保存的 Level_x_HighFreq.png 文件路径
+    :param strength: 注入强度 (支持负数，负数等于磨皮/模糊)
+    """
+    if not layer_path: return image
+    layer_path = str(layer_path).strip('"').strip("'")
+    if not os.path.exists(layer_path):
+        print(f"错误：找不到文件 {layer_path}")
+        return image
+        
+    # 读取细节层
+    detail_img = cv2.imdecode(np.fromfile(layer_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if detail_img is None: return image
+    
+    # 尺寸检查与调整
+    h, w = image.shape[:2]
+    if detail_img.shape[:2] != (h, w):
+        print(f"提示：特征层尺寸 {detail_img.shape[:2]} 与原图 {image.shape[:2]} 不一致，已自动缩放")
+        detail_img = cv2.resize(detail_img, (w, h), interpolation=cv2.INTER_CUBIC)
+
+    # 1. 还原细节数值
+    # 载入 (0-255)，还原为 (-128 到 +127)
+    # detail_float = detail_uint8 - 128.0
+    detail_float = detail_img.astype(np.float32) - 128.0
+    
+    # 2. 叠加
+    img_float = image.astype(np.float32)
+    strength = float(strength)
+    
+    # Result = Base + Strength * Detail
+    result = img_float + (detail_float * strength)
+    
+    # 3. 限制范围并返回
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+def laplacian_inject_multilevel(image, anchor_path, weights_str="1.0, 0.5, 0.2", **kwargs):
+    """
+    多层拉普拉斯特征融合
+    :param anchor_path: 特征文件夹下的任意一个文件 (用于定位目录)
+    :param weights_str: 权重字符串，逗号分隔 (例如 "1.0, 0.5, 0") 分别对应 Level_0, Level_1...
+    """
+    if not anchor_path: return image
+    anchor_path = str(anchor_path).strip('"').strip("'")
+    if not os.path.exists(anchor_path): return image
+    
+    # 1. 获取目录和权重列表
+    search_dir = os.path.dirname(anchor_path)
+    try:
+        # 将 "1.0, 0.5" 解析为 [1.0, 0.5]
+        weights = [float(w.strip()) for w in weights_str.split(',')]
+    except:
+        print("错误：权重格式不正确，请使用英文逗号分隔的数字")
+        return image
+
+    print(f"开始多层融合，目标目录: {search_dir}")
+    print(f"各层权重: {weights}")
+
+    img_float = image.astype(np.float32)
+    h, w = image.shape[:2]
+
+    # 2. 遍历权重，寻找对应的层文件
+    # weights[0] -> 寻找 Level_0_xxx.png
+    # weights[1] -> 寻找 Level_1_xxx.png
+    for level_idx, strength in enumerate(weights):
+        if strength == 0: continue # 权重为0则跳过
+
+        # 搜索匹配的文件名 (不区分 HighFreq 或 LoG，只要开头匹配 Level_X_)
+        target_prefix = f"Level_{level_idx}_"
+        found_file = None
+        
+        for fname in os.listdir(search_dir):
+            if fname.startswith(target_prefix) and (fname.endswith(".png") or fname.endswith(".jpg")):
+                # 排除 Base 层，我们通常只注入细节层，除非你想做图像重构
+                if "Base" in fname: continue 
+                found_file = os.path.join(search_dir, fname)
+                break
+        
+        if not found_file:
+            print(f"警告: 未找到 Level {level_idx} 的特征文件，跳过。")
+            continue
+            
+        # 3. 读取并注入
+        print(f"-> 正在注入: {os.path.basename(found_file)} (强度 {strength})")
+        layer_img = cv2.imdecode(np.fromfile(found_file, dtype=np.uint8), cv2.IMREAD_COLOR)
+        
+        # 自动缩放尺寸以适应当前图片 (关键步骤：金字塔层通常比原图小)
+        if layer_img.shape[:2] != (h, w):
+            layer_img = cv2.resize(layer_img, (w, h), interpolation=cv2.INTER_CUBIC)
+            
+        # 还原数值 (-128 ~ 127) 并加权叠加
+        layer_float = layer_img.astype(np.float32) - 128.0
+        
+        # 核心融合公式: Result += Layer * Weight
+        img_float += layer_float * strength
+
+    # 4. 输出
+    return np.clip(img_float, 0, 255).astype(np.uint8)
 
 # =============================================================================
 # SWD 风格迁移 (新增)

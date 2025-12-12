@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 # 排除本地测试图片输出文件夹
 process_out/
+process/
