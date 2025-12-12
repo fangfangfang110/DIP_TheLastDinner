@@ -1263,3 +1263,62 @@ def generate_inverse_local_mask(image, rect, points_relative, tolerance=20, **kw
     full_mask[y:y+h, x:x+w] = inverse_mask_roi
     
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+# =============================================================================
+# 局部掩码生成 (色彩统计版 - 整合)
+# =============================================================================
+
+def get_dominant_colors_kmeans(image, rect, k=10):
+    """(辅助) K-Means 聚类提取主色调"""
+    x, y, w, h = rect
+    if w <= 0 or h <= 0: return []
+    roi = image[y:y+h, x:x+w]
+    if roi.size == 0: return []
+    
+    pixels = roi.reshape(-1, 3).astype(np.float32)
+    valid_k = min(len(pixels), k)
+    if valid_k == 0: return []
+    
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    flags = cv2.KMEANS_RANDOM_CENTERS
+    _, labels, centers = cv2.kmeans(pixels, valid_k, None, criteria, 10, flags)
+    _, counts = np.unique(labels, return_counts=True)
+    zipped = sorted(zip(centers, counts), key=lambda x: x[1], reverse=True)
+    
+    return [(c.astype(np.uint8).tolist(), count) for c, count in zipped]
+
+def generate_local_mask_by_colors(image, rect, target_colors, tolerance=20, inverse=False, **kwargs):
+    """
+    通用局部掩码生成 (支持正向/反向)
+    :param inverse: False=选中的颜色变白(保留), True=选中的颜色变黑(剔除/背景透明)
+    """
+    if rect is None or not target_colors: return image
+    x, y, w, h = rect
+    roi = image[y:y+h, x:x+w]
+    if roi.size == 0: return image
+    
+    # 1. 计算所有目标色的掩码并集
+    accumulated_mask = np.zeros(roi.shape[:2], dtype=np.uint8)
+    tol = float(tolerance)
+
+    for (b, g, r) in target_colors:
+        lower = np.array([max(0, b-tol), max(0, g-tol), max(0, r-tol)], dtype=np.uint8)
+        upper = np.array([min(255, b+tol), min(255, g+tol), min(255, r+tol)], dtype=np.uint8)
+        mask_i = cv2.inRange(roi, lower, upper)
+        accumulated_mask = cv2.bitwise_or(accumulated_mask, mask_i)
+    
+    # 2. 根据模式处理
+    if inverse:
+        # 反向模式：选中的颜色是要剔除的(变黑)，其他是保留的(变白)
+        # inRange 结果中选中是255(白)。
+        # 我们希望选中变黑 -> 取反
+        final_roi_mask = cv2.bitwise_not(accumulated_mask)
+    else:
+        # 正向模式：选中的颜色是保留的(变白)
+        final_roi_mask = accumulated_mask
+
+    # 3. 放入全图 (全黑背景)
+    full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    full_mask[y:y+h, x:x+w] = final_roi_mask
+    
+    return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)

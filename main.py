@@ -267,6 +267,107 @@ class PixelSelector(tk.Toplevel):
         self.destroy()
 
 # =============================================================================
+# 手动坐标输入框
+# =============================================================================
+class ManualCoordDialog(tk.Toplevel):
+    def __init__(self, parent, max_w, max_h):
+        super().__init__(parent)
+        self.title("输入区域坐标")
+        self.result = None
+        self.max_w, self.max_h = max_w, max_h
+        
+        tk.Label(self, text=f"图片尺寸: {max_w} x {max_h}", fg="#666").pack(pady=5)
+        frame = tk.Frame(self, padx=20, pady=10)
+        frame.pack()
+        
+        self.entries = {}
+        for i, (lbl, key) in enumerate(zip(["X (起点)", "Y (起点)", "W (宽度)", "H (高度)"], ['x', 'y', 'w', 'h'])):
+            tk.Label(frame, text=lbl).grid(row=i, column=0, sticky="e")
+            ent = tk.Entry(frame, width=10)
+            ent.grid(row=i, column=1, padx=5, pady=2)
+            self.entries[key] = ent
+            
+        btn_frame = tk.Frame(self, pady=10)
+        btn_frame.pack(fill=tk.X)
+        tk.Button(btn_frame, text="确定", command=self.on_confirm, bg="#90ee90").pack(side=tk.LEFT, padx=40)
+        tk.Button(btn_frame, text="取消", command=self.destroy).pack(side=tk.RIGHT, padx=40)
+        
+        self.geometry(f"300x220+{parent.winfo_rootx()+100}+{parent.winfo_rooty()+100}")
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+    def on_confirm(self):
+        try:
+            x, y = int(self.entries['x'].get()), int(self.entries['y'].get())
+            w, h = int(self.entries['w'].get()), int(self.entries['h'].get())
+            if x<0 or y<0 or w<=0 or h<=0 or x+w>self.max_w or y+h>self.max_h:
+                messagebox.showwarning("错误", "坐标越界或无效")
+                return
+            self.result = (x, y, w, h)
+            self.destroy()
+        except: messagebox.showerror("错误", "请输入整数")
+
+# =============================================================================
+# 色彩统计选择器
+# =============================================================================
+class ColorStatSelector(tk.Toplevel):
+    def __init__(self, parent, cv_image, rect):
+        super().__init__(parent)
+        self.title("请勾选目标主色调")
+        self.result_colors = None
+        
+        frame_main = tk.Frame(self, padx=10, pady=10)
+        frame_main.pack(fill=tk.BOTH, expand=True)
+        
+        # 预览区
+        x, y, w, h = rect
+        roi = cv_image[y:y+h, x:x+w]
+        scale = 150 / max(h, 1)
+        dw = max(50, int(w * scale))
+        pil_img = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)).resize((dw, 150), Image.Resampling.NEAREST)
+        self.tk_img = ImageTk.PhotoImage(pil_img)
+        tk.Label(frame_main, text="区域预览").pack()
+        tk.Label(frame_main, image=self.tk_img, bg="black").pack(pady=5)
+        
+        # 列表区
+        canvas = tk.Canvas(frame_main, height=200)
+        scroll = tk.Scrollbar(frame_main, command=canvas.yview)
+        list_frame = tk.Frame(canvas)
+        list_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0,0), window=list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.stats = image_methods.get_dominant_colors_kmeans(cv_image, rect, k=12)
+        self.vars, self.colors = [], []
+        
+        for i, (bgr, count) in enumerate(self.stats):
+            row = tk.Frame(list_frame)
+            row.pack(fill=tk.X, pady=2)
+            hex_c = '#%02x%02x%02x' % (bgr[2], bgr[1], bgr[0])
+            tk.Label(row, bg=hex_c, width=4, relief="solid").pack(side=tk.LEFT, padx=5)
+            var = tk.IntVar(value=1 if i==0 else 0)
+            tk.Checkbutton(row, text=f"占比: {count} px", variable=var).pack(side=tk.LEFT)
+            self.vars.append(var)
+            self.colors.append(bgr)
+
+        tk.Button(self, text="确定", command=self.on_confirm, bg="#90ee90", width=20).pack(pady=10)
+        self.geometry(f"400x500+{parent.winfo_rootx()+100}+{parent.winfo_rooty()+100}")
+        self.transient(parent)
+        self.grab_set()
+        self.wait_window(self)
+
+    def on_confirm(self):
+        selected = [self.colors[i] for i, v in enumerate(self.vars) if v.get() == 1]
+        if not selected:
+            messagebox.showwarning("提示", "请至少选一种颜色")
+            return
+        self.result_colors = selected
+        self.destroy()
+
+# =============================================================================
 # 自适应多参数输入框
 # =============================================================================
 class MultiParamDialog(tk.Toplevel):
@@ -467,14 +568,6 @@ class ImageProcessorApp:
                 "interactive_roi": True,
                 "params": [{"key": "iter_count", "label": "迭代次数", "default": 5}]
             },
-            "区域修补 (指定Mask图片)": {
-                "func": image_methods.restoration_idw_external_mask,
-                "interactive_roi": True,
-                "params": [
-                    {"key": "mask_path", "label": "二值图路径", "default": "", "type": "file", "tip": "选择处理好的黑白二值图"},
-                    {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
-                ]
-            },
             "形态学边缘检测": {
                 "func": image_methods.morph_edge_detection,
                 "params": [
@@ -489,18 +582,28 @@ class ImageProcessorApp:
                     {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}
                 ]
             },
-            "局部掩码生成 (颜色阈值)": {
-                "func": image_methods.generate_local_mask,
-                "roi_and_point": True,
+           "局部掩码生成 (颜色阈值)": {
+                "func": image_methods.generate_local_mask_by_colors,
+                "roi_and_color_stat": True,  # 使用新交互逻辑
                 "params": [
-                    {"key": "tolerance", "label": "容差范围", "default": 20, "tip": "颜色浮动范围 (0-255)"}
+                    {"key": "tolerance", "label": "容差范围", "default": 20, "tip": "颜色浮动范围"},
+                    {"key": "inverse", "label": "模式", "default": 0, "tip": "无需修改 (0=正向)"} # 隐藏参数，默认0
                 ]
             },
             "局部掩码生成 (反向排除)": {
-                "func": image_methods.generate_inverse_local_mask,
-                "roi_and_point": True,  # 复用相同的交互逻辑：先框选 ROI，再取点
+                "func": image_methods.generate_local_mask_by_colors,
+                "roi_and_color_stat": True,  # 使用新交互逻辑
                 "params": [
-                    {"key": "tolerance", "label": "排除容差", "default": 20, "tip": "容差内的颜色将被剔除(变黑)"}
+                    {"key": "tolerance", "label": "排除容差", "default": 20, "tip": "剔除颜色的范围"},
+                    {"key": "inverse", "label": "模式", "default": 1, "tip": "无需修改 (1=反向)"} # 隐藏参数，默认1
+                ]
+            },
+            "区域修补 (指定Mask图片)": {
+                "func": image_methods.restoration_idw_external_mask,
+                "interactive_roi": True,
+                "params": [
+                    {"key": "mask_path", "label": "二值图路径", "default": "", "type": "file", "tip": "选择处理好的黑白二值图"},
+                    {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
                 ]
             },
             "Gamma 亮度校正": {
@@ -812,24 +915,40 @@ class ImageProcessorApp:
         rect_roi = None
         points = None
         points_relative = None # 这是一个列表
+        target_colors = None
 
-        # 情况A: ROI + 取点
-        if config.get("roi_and_point", False):
-            selector_roi = ROISelector(self.root, self.cv_img_original, title="第一步：请框选要处理的区域")
-            if selector_roi.result_rect is None:
-                self.log_operation(f"❌ 取消操作: {method_name}")
-                return 
-            rect_roi = selector_roi.result_rect
+        # === 处理：区域选择 (手动/鼠标) + 色彩统计 ===
+        # 替代了旧的 roi_and_point 逻辑
+        if config.get("roi_and_color_stat", False):
+            # 1. 询问区域选择方式
+            choice = messagebox.askyesno(
+                "第一步：选择区域", 
+                "请选择区域指定方式：\n\n【是 (Yes)】 手动输入坐标 (X,Y,W,H)\n【否 (No)】  鼠标框选"
+            )
             
-            x, y, w, h = rect_roi
-            roi_img = self.cv_img_original[y:y+h, x:x+w]
-            selector_pixel = PixelSelector(self.root, roi_img, title="第二步：请点击目标颜色的像素 (可多选)")
+            if choice: # 手动输入
+                h, w = self.cv_img_original.shape[:2]
+                dlg = ManualCoordDialog(self.root, w, h)
+                if dlg.result is None: return
+                rect_roi = dlg.result
+                self.log_operation(f"⌨️ 手动坐标: {rect_roi}")
+            else: # 鼠标框选
+                selector = ROISelector(self.root, self.cv_img_original, title="请框选分析区域")
+                if selector.result_rect is None: return
+                rect_roi = selector.result_rect
+                self.log_operation(f"🖱️ 鼠标框选: {rect_roi}")
             
-            if not selector_pixel.result_points:
-                self.log_operation(f"❌ 取消操作: {method_name}")
-                return
-            points_relative = selector_pixel.result_points
-            self.log_operation(f"🖱️ 区域+取点确定: ROI={rect_roi}, PointsCount={len(points_relative)}")
+            # 2. 弹出色彩统计选择
+            # 将确定好的 rect_roi 传入进行分析
+            selector_color = ColorStatSelector(self.root, self.cv_img_original, rect_roi)
+            if not selector_color.result_colors: return
+            
+            # 3. 准备参数
+            target_colors = selector_color.result_colors  # 赋值给第一步定义的变量
+            # kwargs['target_colors'] = selector_color.result_colors
+            # kwargs['rect'] = rect_roi
+            
+            self.log_operation(f"🎨 选定主色: {len(selector_color.result_colors)} 种")
 
         # 情况B: 仅 ROI
         elif config.get("interactive_roi", False):
@@ -884,6 +1003,9 @@ class ImageProcessorApp:
         if rect_roi: kwargs['rect'] = rect_roi
         if points is not None: kwargs['points'] = points
         if points_relative is not None: kwargs['points_relative'] = points_relative
+        
+        # 【新增】把暂存的颜色列表塞进去
+        if target_colors is not None: kwargs['target_colors'] = target_colors
 
         # 3. 定义后台干活的工人 (Worker)
         def worker_thread():
