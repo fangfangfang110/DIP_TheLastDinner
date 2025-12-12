@@ -420,6 +420,16 @@ class ImageProcessorApp:
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
+            "画布扩展": {
+                "func": image_methods.canvas_expand,
+                "params": [
+                    {"key": "pad_top", "label": "上边距", "default": 200},
+                    {"key": "pad_bottom", "label": "下边距", "default": 200},
+                    {"key": "pad_left", "label": "左边距", "default": 200},
+                    {"key": "pad_right", "label": "右边距", "default": 200},
+                    {"key": "mode", "label": "填充模式", "default": 1, "tip": "0=纯黑, 1=镜像(推荐), 2=复制边缘"}
+                ]
+            },
             "交互式透视变换校正": {
                 "func": image_methods.perspective_correction,
                 "interactive_points": True,
@@ -445,8 +455,6 @@ class ImageProcessorApp:
                     {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
                 ]
             },
-            
-
             "形态学边缘检测": {
                 "func": image_methods.morph_edge_detection,
                 "params": [
