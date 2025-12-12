@@ -420,14 +420,18 @@ class ImageProcessorApp:
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
-            "画布扩展 (通用版)": {
+           "画布扩展 (通用版)": {
                 "func": image_methods.canvas_expand_universal,
                 "params": [
                     {"key": "pad_top", "label": "上边距", "default": 200},
                     {"key": "pad_bottom", "label": "下边距", "default": 200},
                     {"key": "pad_left", "label": "左边距", "default": 200},
                     {"key": "pad_right", "label": "右边距", "default": 200},
-                    {"key": "algo_mode", "label": "扩展算法", "default": 1, "tip": "0=纯黑, 1=镜像(推荐), 2=复制, 3=流体补全, 4=Telea补全"},
+                    {"key": "algo_mode", "label": "扩展算法", "default": 2, "tip": "0=纯黑, 1=镜像, 2=复制边缘(配合优化), 3=流体, 4=Telea"},
+                    
+                    # 【修改】更新提示文字
+                    {"key": "clean_strength", "label": "边缘清洗/阈值", "default": 100, "tip": "0=关闭。输入<20为滤波强度；输入>20为黑点阈值(推荐100)，可强力去除大块黑斑。"},
+                    
                     {"key": "radius", "label": "修补半径", "default": 3.0, "tip": "仅对算法3、4有效"}
                 ]
             },

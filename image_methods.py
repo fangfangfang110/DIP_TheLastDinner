@@ -3,6 +3,7 @@ import numpy as np
 import os
 from datetime import datetime
 from scipy.spatial import cKDTree  # 用于加速最近邻搜索
+import random
 # =============================================================================
 # 通用辅助函数
 # =============================================================================
@@ -130,22 +131,120 @@ def canvas_expand_inpaint(image, pad_top=50, pad_bottom=50, pad_left=50, pad_rig
 # 通用画布扩展 (合并版)
 # =============================================================================
 
-def canvas_expand_universal(image, pad_top=50, pad_bottom=50, pad_left=50, pad_right=50, algo_mode=1, radius=3, **kwargs):
+def _clean_edge_noise(image, pad_top, pad_bottom, pad_left, pad_right, k_size=5):
     """
-    通用画布扩展接口，整合了普通扩展和统计学扩展。
-    :param algo_mode: 0=纯黑, 1=镜像(推荐), 2=复制边缘, 3=Navier-Stokes(流体), 4=Telea(快速行进)
+    (内部辅助) 扩展前预处理：对边缘像素进行1D中值滤波，消除噪点/黑点。
+    防止这些噪点在扩展时被拉伸成明显的黑线。
+    """
+    if k_size <= 1: return image
+    
+    # 确保核大小是奇数
+    k = int(k_size)
+    if k % 2 == 0: k += 1
+    
+    # 必须操作副本，避免修改原图
+    clean_img = image.copy()
+    h, w = clean_img.shape[:2]
+    
+    # 1. 顶部边缘 (如果向上扩展)
+    if pad_top > 0:
+        # 提取第一行 (1, W, C) -> 中值滤波 -> 放回
+        # cv2.medianBlur 支持任意维度的 2D 图像，这里把单行看作高度为1的图片
+        clean_img[0:1, :] = cv2.medianBlur(clean_img[0:1, :], k)
+        
+    # 2. 底部边缘 (如果向下扩展)
+    if pad_bottom > 0:
+        clean_img[h-1:h, :] = cv2.medianBlur(clean_img[h-1:h, :], k)
+        
+    # 3. 左侧边缘
+    if pad_left > 0:
+        clean_img[:, 0:1] = cv2.medianBlur(clean_img[:, 0:1], k)
+        
+    # 4. 右侧边缘
+    if pad_right > 0:
+        clean_img[:, w-1:w] = cv2.medianBlur(clean_img[:, w-1:w], k)
+        
+    print(f"边缘预处理完成 (强度 k={k})，噪点已去除。")
+    return clean_img
+
+def _clean_edge_noise_inpaint(image, pad_top, pad_bottom, pad_left, pad_right, threshold=100):
+    """
+    (内部辅助) 扩展前预处理 [高级版]：
+    通过亮度阈值识别边缘的“黑点/深色噪点”，并使用 Inpaint 算法将其抹除。
+    能够解决中值滤波无法消除大面积黑块的问题。
+    :param threshold: 亮度阈值 (0-255)。低于此值的像素会被视为噪点并被修复。
+    """
+    clean_img = image.copy()
+    h, w = clean_img.shape[:2]
+    
+    # 定义修复函数：提取边缘 -> 生成掩码 -> 修复 -> 放回
+    def process_edge(roi):
+        # roi shape: (1, W, 3) 或 (H, 1, 3)
+        # 1. 转灰度计算亮度
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # 2. 生成掩码：亮度 < 阈值 的区域标记为 255 (需要修复)
+        #    这样无论黑点有多少个，只要是黑的，都会被标记
+        _, mask = cv2.threshold(gray, float(threshold), 255, cv2.THRESH_BINARY_INV)
+        
+        # 如果全是黑的或全是白的，就别修了，防止报错或无效
+        if cv2.countNonZero(mask) == 0 or cv2.countNonZero(mask) == mask.size:
+            return roi
+            
+        # 3. 使用 Telea 算法修复 (半径设为 5 足够应付大多数边缘)
+        #    注意：Inpaint 需要 8位单通道掩码
+        inpainted = cv2.inpaint(roi, mask, 5, cv2.INPAINT_TELEA)
+        return inpainted
+
+    print(f"执行边缘深度清洗 (阈值 < {threshold})...")
+
+    # 1. 顶部边缘
+    if pad_top > 0:
+        clean_img[0:1, :] = process_edge(clean_img[0:1, :])
+        
+    # 2. 底部边缘
+    if pad_bottom > 0:
+        clean_img[h-1:h, :] = process_edge(clean_img[h-1:h, :])
+        
+    # 3. 左侧边缘
+    if pad_left > 0:
+        clean_img[:, 0:1] = process_edge(clean_img[:, 0:1])
+        
+    # 4. 右侧边缘
+    if pad_right > 0:
+        clean_img[:, w-1:w] = process_edge(clean_img[:, w-1:w])
+        
+    return clean_img
+
+def canvas_expand_universal(image, pad_top=50, pad_bottom=50, pad_left=50, pad_right=50, algo_mode=1, radius=3, clean_strength=0, **kwargs):
+    """
+    通用画布扩展接口 (含智能边缘优化)
+    :param clean_strength: 
+        - 0: 关闭优化
+        - 1~19: 使用【中值滤波】 (数值为核大小，如 5, 7)。适合去除零星噪点。
+        - >=20: 使用【阈值修复】 (数值为亮度阈值，如 100)。适合去除大面积黑斑。
     """
     mode = int(algo_mode)
+    clean_val = int(clean_strength)
     
-    # 模式 0-2: 调用基础扩展
+    img_to_expand = image
+    
+    # === 边缘预处理策略选择 ===
+    if clean_val > 0:
+        if clean_val < 20:
+            # 模式 A: 中值滤波 (适合细小噪点)
+            img_to_expand = _clean_edge_noise(image, pad_top, pad_bottom, pad_left, pad_right, k_size=clean_val)
+        else:
+            # 模式 B: 阈值修复 (适合大块黑斑，用户想要"去除黑点")
+            # 传入的 clean_val 即为判定黑色的阈值
+            img_to_expand = _clean_edge_noise_inpaint(image, pad_top, pad_bottom, pad_left, pad_right, threshold=clean_val)
+    
+    # === 下面保持不变 ===
     if mode <= 2:
-        return canvas_expand(image, pad_top, pad_bottom, pad_left, pad_right, mode=mode)
-    
-    # 模式 3-4: 调用统计学填充 (Inpainting)
+        return canvas_expand(img_to_expand, pad_top, pad_bottom, pad_left, pad_right, mode=mode)
     else:
-        # 映射: 3 -> 0 (NS), 4 -> 1 (Telea)
         inpaint_method = 0 if mode == 3 else 1
-        return canvas_expand_inpaint(image, pad_top, pad_bottom, pad_left, pad_right, method=inpaint_method, radius=radius)
+        return canvas_expand_inpaint(img_to_expand, pad_top, pad_bottom, pad_left, pad_right, method=inpaint_method, radius=radius)
 
 # =============================================================================
 # 画布裁剪
