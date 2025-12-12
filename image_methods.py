@@ -127,6 +127,27 @@ def canvas_expand_inpaint(image, pad_top=50, pad_bottom=50, pad_left=50, pad_rig
     return res
 
 # =============================================================================
+# 通用画布扩展 (合并版)
+# =============================================================================
+
+def canvas_expand_universal(image, pad_top=50, pad_bottom=50, pad_left=50, pad_right=50, algo_mode=1, radius=3, **kwargs):
+    """
+    通用画布扩展接口，整合了普通扩展和统计学扩展。
+    :param algo_mode: 0=纯黑, 1=镜像(推荐), 2=复制边缘, 3=Navier-Stokes(流体), 4=Telea(快速行进)
+    """
+    mode = int(algo_mode)
+    
+    # 模式 0-2: 调用基础扩展
+    if mode <= 2:
+        return canvas_expand(image, pad_top, pad_bottom, pad_left, pad_right, mode=mode)
+    
+    # 模式 3-4: 调用统计学填充 (Inpainting)
+    else:
+        # 映射: 3 -> 0 (NS), 4 -> 1 (Telea)
+        inpaint_method = 0 if mode == 3 else 1
+        return canvas_expand_inpaint(image, pad_top, pad_bottom, pad_left, pad_right, method=inpaint_method, radius=radius)
+
+# =============================================================================
 # 画布裁剪
 # =============================================================================
 

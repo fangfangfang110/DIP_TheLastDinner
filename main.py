@@ -349,7 +349,7 @@ class MultiParamDialog(tk.Toplevel):
             tip = cfg.get('tip', '')
             # 关键修改4: 增加 wraplength 实现自动换行，防止文字被截断
             tk.Label(frame, text=tip, fg="#555", font=("Arial", 8), 
-                     wraplength=280, justify="left").grid(row=row, column=2, sticky="w", padx=5)
+                     wraplength=380, justify="left").grid(row=row, column=2, sticky="w", padx=5)
 
         # 按钮区
         btn_frame = tk.Frame(self, pady=10)
@@ -357,9 +357,9 @@ class MultiParamDialog(tk.Toplevel):
         tk.Button(btn_frame, text="确定执行", command=self.on_ok, width=15, bg="#dddddd").pack(side=tk.LEFT, padx=10)
         tk.Button(btn_frame, text="取消", command=self.on_cancel, width=10).pack(side=tk.LEFT, padx=10)
         
-        # 初始高度计算，宽度增加到 750
-        h = min(800, len(param_configs) * 50 + 100)
-        self.geometry(f"750x{h}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
+        # 初始高度计算
+        h = min(900, len(param_configs) * 70 + 100)
+        self.geometry(f"900x{h}+{parent.winfo_rootx()+50}+{parent.winfo_rooty()+50}")
         
         self.transient(parent)
         self.grab_set()
@@ -420,34 +420,22 @@ class ImageProcessorApp:
             return [{"key": key, "label": label, "default": default, "tip": tip}]
 
         return {
-            "画布扩展": {
-                "func": image_methods.canvas_expand,
+            "画布扩展 (通用版)": {
+                "func": image_methods.canvas_expand_universal,
                 "params": [
                     {"key": "pad_top", "label": "上边距", "default": 200},
                     {"key": "pad_bottom", "label": "下边距", "default": 200},
                     {"key": "pad_left", "label": "左边距", "default": 200},
                     {"key": "pad_right", "label": "右边距", "default": 200},
-                    {"key": "mode", "label": "填充模式", "default": 1, "tip": "0=纯黑, 1=镜像(推荐), 2=复制边缘"}
+                    {"key": "algo_mode", "label": "扩展算法", "default": 1, "tip": "0=纯黑, 1=镜像(推荐), 2=复制, 3=流体补全, 4=Telea补全"},
+                    {"key": "radius", "label": "修补半径", "default": 3.0, "tip": "仅对算法3、4有效"}
                 ]
             },
-            "画布扩展 (统计学生成)": {
-                "func": image_methods.canvas_expand_inpaint,
-                "params": [
-                    {"key": "pad_top", "label": "上边距", "default": 50},
-                    {"key": "pad_bottom", "label": "下边距", "default": 50},
-                    {"key": "pad_left", "label": "左边距", "default": 50},
-                    {"key": "pad_right", "label": "右边距", "default": 50},
-                    {"key": "method", "label": "算法", "default": 1, "tip": "0=Navier-Stokes(流体), 1=Telea(快速行进)"},
-                    {"key": "radius", "label": "采样半径", "default": 3.0, "tip": "建议 3-10，太大容易糊"}
-                ]
-            },
+            # 注意：这里去掉了 params，意味着不需要弹出参数框
             "画布裁剪 (ROI选取)": {
                 "func": image_methods.canvas_crop,
-                "interactive_roi": True,  # <--- 关键：开启这个开关，就会自动弹出选框工具
-                "params": [
-                    # 这里放一个占位参数即可，因为核心数据是靠鼠标框选的 rect 传入的
-                    {"key": "dummy", "label": "操作提示", "default": 0, "tip": "点击确定后，请在弹出的窗口中框选保留区域"}
-                ]
+                "interactive_roi": True, 
+                "params": [] 
             },
             "画布裁剪 (指定边距)": {
                 "func": image_methods.canvas_crop_margin,
@@ -748,14 +736,28 @@ class ImageProcessorApp:
         timestamp = datetime.now().strftime("[%H:%M:%S]")
         full_entry = f"{timestamp} {entry}"
         
+        # 1. 更新 UI 界面
         self.ui_log.append(full_entry)
         self.log_text.config(state=tk.NORMAL)
         self.log_text.insert(tk.END, full_entry + "\n" + "-"*48 + "\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
         
+        # 2. 如果是重要操作(is_ui_only=False)，立即写入文件
         if not is_ui_only:
              self.persistent_log.append(full_entry)
+             try:
+                 # 使用追加模式 'a' 即时写入
+                 with open(self.log_file_name, 'a', encoding='utf-8') as f:
+                     # 如果是本次启动的第一条，加个分割线和时间头
+                     if len(self.persistent_log) == 1:
+                         session_start = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                         header = f"\n{'='*60}\n会话记录: {session_start} | 文件: {os.path.basename(self.img_path_current)}\n{'='*60}\n"
+                         f.write(header)
+                     
+                     f.write(full_entry + "\n")
+             except Exception as e:
+                 print(f"日志写入失败: {e}")
 
     def save_session_log(self):
         if not self.persistent_log: return
@@ -769,7 +771,7 @@ class ImageProcessorApp:
             print(f"日志保存失败: {e}")
 
     def on_closing(self):
-        self.save_session_log()
+        #self.save_session_log()
         self.root.destroy()
 
     def load_image(self):
@@ -844,11 +846,19 @@ class ImageProcessorApp:
             self.log_operation(f"🖱️ 四点确定: {points.tolist()}")
        
         # 参数弹窗
-        history = self.param_history.get(method_name, {})
-        dialog = MultiParamDialog(self.root, f"参数: {method_name}", config["params"], history_values=history)
-        if dialog.result_data is None: return 
+
+        # 检查是否需要参数弹窗
+        config_params = config.get("params", [])
         
-        params = dialog.result_data
+        if not config_params:
+            # 如果配置中 params 为空列表 (例如 画布裁剪)，则直接使用空字典，不弹窗
+            params = {}
+        else:
+            # 如果有参数，才弹出对话框
+            history = self.param_history.get(method_name, {})
+            dialog = MultiParamDialog(self.root, f"参数: {method_name}", config_params, history_values=history)
+            if dialog.result_data is None: return 
+            params = dialog.result_data
         
         # =========================================================
         # 第二阶段：线程准备与启动
