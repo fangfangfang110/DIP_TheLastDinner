@@ -57,6 +57,29 @@ def color_saturation_boost(image, scale=1.0, **kwargs):
     final_hsv = cv2.merge((h, s, v))
     return cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
 
+def canvas_expand(image, pad_top=200, pad_bottom=200, pad_left=200, pad_right=200, mode=1, **kwargs):
+    """
+    扩展图像画布，为透视变换做准备。
+    :param mode: 0=纯黑填充, 1=镜像填充(推荐), 2=边缘复制
+    """
+    t, b, l, r = int(pad_top), int(pad_bottom), int(pad_left), int(pad_right)
+    mode = int(mode)
+    
+    # 根据模式选择 OpenCV 的边框类型
+    if mode == 1:
+        # 镜像填充 (gfedcb|abcdefgh|gfedcba)
+        # 这种模式下，透视变换后的边缘过渡最自然
+        border_type = cv2.BORDER_REFLECT_101
+    elif mode == 2:
+        # 复制边缘 (aaaaaa|abcdefgh|hhhhhhh)
+        border_type = cv2.BORDER_REPLICATE
+    else:
+        # 纯色填充 (默认黑色)
+        border_type = cv2.BORDER_CONSTANT
+        
+    # 执行扩展 (黑色默认值 value=(0,0,0))
+    return cv2.copyMakeBorder(image, t, b, l, r, border_type, value=(0, 0, 0))
+
 # =============================================================================
 # 增强与锐化
 # =============================================================================
