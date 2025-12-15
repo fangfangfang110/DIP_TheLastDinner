@@ -721,11 +721,11 @@ class ImageProcessorApp:
                     {"key": "searchWindowSize", "label": "搜索大小", "default": 21}
                 ]
             },
-            "暗通道去雾": {
+            "全局去雾": {
                 "func": image_methods.dehaze_dcp,
                 "params": single("omega", "去雾程度", 0.95)
             },
-            "暗通道去雾 (局部)": {
+            "分权重去雾": {
                 "func": image_methods.dehaze_dcp_spatial,
                 "params": [
                     {"key": "omega_center", "label": "中心强度", "default": 0.7},
