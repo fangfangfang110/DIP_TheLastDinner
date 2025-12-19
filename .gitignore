@@ -6,3 +6,4 @@ __pycache__/
 # 排除本地测试图片输出文件夹
 process_out/
 process/
+.DS_Store
