@@ -5,6 +5,7 @@ from PIL import Image, ImageTk, ImageDraw
 import cv2
 import numpy as np
 import os
+import platform
 from datetime import datetime
 import image_methods
 
@@ -763,8 +764,19 @@ class ImageProcessorApp:
         scrollbar.pack(side="right", fill="y")
 
         def _on_mousewheel(event):
-            # Windows/MacOS 滚轮处理
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # 获取当前操作系统名称
+            os_name = platform.system()
+            
+            if os_name == "Darwin":
+                # macOS 系统处理逻辑
+                # macOS 的 delta 值通常较小，不需要除以 120
+                # 如果滚动太快，可以试着除以几，例如: int(-1 * event.delta / 3)
+                delta = event.delta
+                # 针对 macOS 的自然滚动或非自然滚动，方向可能需要调整，通常取反即可
+                canvas.yview_scroll(int(-1 * delta), "units")
+            else:
+                # Windows 系统处理逻辑 (保持你原有的逻辑)
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def _bind_mousewheel(event):
             # 鼠标进入区域：绑定滚轮事件 (使用 bind_all 捕获全局滚轮)
