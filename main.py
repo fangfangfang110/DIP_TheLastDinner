@@ -496,7 +496,7 @@ class MultiParamDialog(tk.Toplevel):
 class ImageProcessorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("数字图像处理专业平台")
+        self.root.title("数字图像处理平台")
         self.root.geometry("1500x900") 
         
         self.cv_img_original = None
@@ -530,8 +530,6 @@ class ImageProcessorApp:
                     {"key": "pad_left", "label": "左边距", "default": 200},
                     {"key": "pad_right", "label": "右边距", "default": 200},
                     {"key": "algo_mode", "label": "扩展算法", "default": 2, "tip": "0=纯黑, 1=镜像, 2=复制边缘(配合优化), 3=流体, 4=Telea"},
-                    
-                    # 【修改】更新提示文字
                     {"key": "clean_strength", "label": "边缘清洗/阈值", "default": 100, "tip": "0=关闭。输入<20为滤波强度；输入>20为黑点阈值(推荐100)，可强力去除大块黑斑。"},
                     
                     {"key": "radius", "label": "修补半径", "default": 3.0, "tip": "仅对算法3、4有效"}
@@ -583,6 +581,10 @@ class ImageProcessorApp:
                     {"key": "method", "label": "算法模式", "default": 1, "tip": "0=手动, 1=Otsu, 2=自适应"}
                 ]
             },
+            "二值图反相": {
+                "func": image_methods.binary_invert,
+                "params": [] 
+            },
            "局部掩码生成 (颜色阈值)": {
                 "func": image_methods.generate_local_mask_by_colors,
                 "roi_and_color_stat": True,  # 使用新交互逻辑
@@ -605,6 +607,19 @@ class ImageProcessorApp:
                 "params": [
                     {"key": "mask_path", "label": "二值图路径", "default": "", "type": "file", "tip": "选择处理好的黑白二值图"},
                     {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
+                ]
+            },
+            "外部区域替换": {
+                "func": image_methods.replace_region_from_external,
+                "interactive_roi": True, # 开启鼠标框选功能
+                "params": [
+                    {
+                        "key": "ref_path", 
+                        "label": "源图片路径(被处理图)", 
+                        "default": "", 
+                        "type": "file", 
+                        "tip": "选择一张尺寸相同的图片，系统将从中裁取相同坐标的区域填补到当前图中"
+                    }
                 ]
             },
             "Gamma 亮度校正": {

@@ -1322,3 +1322,62 @@ def generate_local_mask_by_colors(image, rect, target_colors, tolerance=20, inve
     full_mask[y:y+h, x:x+w] = final_roi_mask
     
     return cv2.cvtColor(full_mask, cv2.COLOR_GRAY2BGR)
+
+def replace_region_from_external(image, rect, ref_path, **kwargs):
+    """
+    从外部图片中裁取相同区域并替换当前图片区域
+    :param image: 当前正在处理的图片 (目标图)
+    :param rect: (x, y, w, h) 用户框选的矩形区域
+    :param ref_path: 外部源图片的路径
+    """
+    if rect is None or not ref_path:
+        print("错误：选区无效或未选择源图片路径")
+        return image
+    
+    # 路径清理
+    ref_path = str(ref_path).strip('"').strip("'")
+    if not os.path.exists(ref_path):
+        print(f"错误：找不到源文件 {ref_path}")
+        return image
+        
+    # 读取外部源图片 (使用 imdecode 支持中文路径)
+    src_img = cv2.imdecode(np.fromfile(ref_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if src_img is None:
+        print("错误：无法读取源图片")
+        return image
+
+    x, y, w, h = rect
+    result = image.copy()
+    
+    # 安全检查：获取两张图片的尺寸，防止越界
+    h_max, w_max = image.shape[:2]
+    sh_max, sw_max = src_img.shape[:2]
+    
+    # 计算实际可执行替换的边界（取目标图和源图的交集）
+    y_end = min(y + h, h_max, sh_max)
+    x_end = min(x + w, w_max, sw_max)
+    
+    # 如果选区合法且有重叠部分，执行替换
+    if y_end > y and x_end > x:
+        result[y:y_end, x:x_end] = src_img[y:y_end, x:x_end]
+        print(f"成功从源图替换了区域: x={x}, y={y}, w={x_end-x}, h={y_end-y}")
+    else:
+        print("错误：选区在源图或目标图中完全不可见")
+            
+    return result
+
+def binary_invert(image, **kwargs):
+    """
+    二值图反相 (黑白翻转)
+    """
+    # 预处理：确保在灰度空间操作
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
+
+    # 执行按位取反 (0 变 255，255 变 0)
+    inverted = cv2.bitwise_not(gray)
+
+    # 转回 3 通道 BGR 以保持平台显示一致性
+    return cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)
