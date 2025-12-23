@@ -607,6 +607,19 @@ class ImageProcessorApp:
                     {"key": "k_neighbors", "label": "参考点数量", "default": 5, "tip": "取周围最近的k个黑点"}
                 ]
             },
+            "外部区域替换": {
+                "func": image_methods.replace_region_from_external,
+                "interactive_roi": True, # 开启鼠标框选功能
+                "params": [
+                    {
+                        "key": "ref_path", 
+                        "label": "源图片路径", 
+                        "default": "", 
+                        "type": "file", 
+                        "tip": "选择一张尺寸相同的图片，系统将从中裁取相同坐标的区域填补到当前图中"
+                    }
+                ]
+            },
             "Gamma 亮度校正": {
                 "func": image_methods.gamma_correction,
                 "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
