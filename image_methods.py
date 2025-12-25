@@ -1381,3 +1381,48 @@ def binary_invert(image, **kwargs):
 
     # 转回 3 通道 BGR 以保持平台显示一致性
     return cv2.cvtColor(inverted, cv2.COLOR_GRAY2BGR)
+
+# 分通道 Gamma 亮度矫正 (RGB独立调整)
+# =============================================================================
+def gamma_correction_channel_wise(image, gamma_r=1.3, gamma_g=1.3, gamma_b=1.3):
+    """
+    分通道Gamma亮度矫正（红、绿、蓝通道独立调整，精准控制各通道亮度）
+    原理：对每个颜色通道单独应用Gamma变换，避免整体矫正导致的色彩偏移
+    :param image: 输入图像 (cv2 BGR 格式)
+    :param gamma_r: 红色通道Gamma值 (>1 提亮，<1 变暗，1.0为原图)，默认1.3
+    :param gamma_g: 绿色通道Gamma值 (>1 提亮，<1 变暗，1.0为原图)，默认1.3
+    :param gamma_b: 蓝色通道Gamma值 (>1 提亮，<1 变暗，1.0为原图)，默认1.3
+    :return: 分通道矫正后的图像 (cv2 BGR 格式，uint8)
+    """
+    # 1. 参数校验与预处理
+    if image is None or image.size == 0:
+        print("错误：无效的输入图像")
+        return image
+    
+    # 分离BGR通道（注意：cv2读取的图像是BGR顺序，对应蓝、绿、红）
+    b_channel, g_channel, r_channel = cv2.split(image)
+    # 转为float32格式，避免运算溢出
+    b_float = b_channel.astype(np.float32) / 255.0
+    g_float = g_channel.astype(np.float32) / 255.0
+    r_float = r_channel.astype(np.float32) / 255.0
+    
+    # 2. 分通道应用Gamma变换
+    # 构建伽马查找表（提升运算效率，避免逐像素循环）
+    def create_gamma_lut(gamma):
+        gamma = max(0.1, gamma)  # 防止gamma值过小导致异常
+        lut = np.array([((i / 255.0) ** (1.0 / gamma)) * 255.0 for i in range(256)], dtype=np.uint8)
+        return lut
+    
+    # 为每个通道生成对应的查找表
+    lut_r = create_gamma_lut(gamma_r)
+    lut_g = create_gamma_lut(gamma_g)
+    lut_b = create_gamma_lut(gamma_b)
+    
+    # 应用查找表进行Gamma矫正
+    r_corrected = cv2.LUT(r_channel, lut_r)
+    g_corrected = cv2.LUT(g_channel, lut_g)
+    b_corrected = cv2.LUT(b_channel, lut_b)
+    
+    # 3. 合并通道并返回
+    corrected_image = cv2.merge([b_corrected, g_corrected, r_corrected])
+    return corrected_image

@@ -626,6 +626,14 @@ class ImageProcessorApp:
                 "func": image_methods.gamma_correction,
                 "params": single("gamma", "Gamma值", 1.5, ">1 提亮")
             },
+            "分通道 Gamma 亮度矫正 (RGB独立)": {
+                "func": image_methods.gamma_correction_channel_wise,
+                "params": [
+                    {"key": "gamma_r", "label": "红色通道Gamma值", "default": 1.3, "tip": ">1 提亮红色，<1 变暗红色"},
+                    {"key": "gamma_g", "label": "绿色通道Gamma值", "default": 1.3, "tip": ">1 提亮绿色，<1 变暗绿色"},
+                    {"key": "gamma_b", "label": "蓝色通道Gamma值", "default": 1.3, "tip": ">1 提亮蓝色，<1 变暗蓝色"}
+                ]
+            },
             "Laplacian特征融合": {
                 "func": image_methods.laplacian_pyramid_fusion,
                 "params": [
