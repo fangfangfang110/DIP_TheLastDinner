@@ -4,6 +4,8 @@ import os
 from datetime import datetime
 from scipy.spatial import cKDTree  # 用于加速最近邻搜索
 import random
+from PIL import Image
+from simple_lama_inpainting import SimpleLama # 确保已安装: pip install simple-lama-inpainting
 # =============================================================================
 # 通用辅助函数
 # =============================================================================
@@ -1363,3 +1365,127 @@ def gamma_correction_channel_wise(image, gamma_r=1.3, gamma_g=1.3, gamma_b=1.3):
     # 3. 合并通道并返回
     corrected_image = cv2.merge([b_corrected, g_corrected, r_corrected])
     return corrected_image
+
+# =============================================================================
+# 全局缓存 LaMa 模型，避免重复加载导致卡顿
+# =============================================================================
+_LAMA_MODEL_INSTANCE = None
+
+def _get_lama_model():
+    global _LAMA_MODEL_INSTANCE
+    if _LAMA_MODEL_INSTANCE is None:
+        print("正在初始化 LaMa 模型 (首次运行可能需要下载权重)...")
+        # 默认标准初始化
+        _LAMA_MODEL_INSTANCE = SimpleLama()
+    return _LAMA_MODEL_INSTANCE
+
+def repair_wall_white_spots_lama(image, rect, 
+                                 gradient_thresh=120, 
+                                 blur_k=21, 
+                                 sobel_k=9, 
+                                 pad_context=128, 
+                                 color_mode=0, 
+                                 target_channel=0, 
+                                 **kwargs):
+    """
+    基于 LaMa + 梯度掩码的智能墙面修复
+    """
+    if rect is None: return image
+    x, y, w, h = rect
+    
+    # 1. 提取 ROI
+    roi_img = image[y:y+h, x:x+w].copy()
+    if roi_img.size == 0: return image
+
+    # 2. 预处理参数
+    blur_k = int(blur_k) | 1  # 强转奇数
+    sobel_k = int(sobel_k) | 1
+    morph_k = 5
+    
+    # 3. 颜色空间转换
+    if int(color_mode) == 0:   # LAB
+        roi_process = cv2.cvtColor(roi_img, cv2.COLOR_BGR2LAB)
+    elif int(color_mode) == 1: # HSV
+        roi_process = cv2.cvtColor(roi_img, cv2.COLOR_BGR2HSV)
+    else:                      # GRAY
+        gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
+        roi_process = gray[:, :, np.newaxis] 
+
+    # 4. 提取指定通道并计算梯度
+    ch_idx = min(int(target_channel), roi_process.shape[2]-1)
+    target_data = roi_process[:, :, ch_idx]
+    
+    # 高斯模糊降噪
+    blurred = cv2.GaussianBlur(target_data, (blur_k, blur_k), 3)
+    
+    # Sobel 梯度
+    grad_x = cv2.Sobel(blurred, cv2.CV_64F, 1, 0, ksize=sobel_k)
+    grad_y = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=sobel_k)
+    magnitude = np.sqrt(grad_x**2 + grad_y**2)
+    
+    # 归一化并二值化
+    norm_mag = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    _, mask_roi = cv2.threshold(norm_mag, int(gradient_thresh), 255, cv2.THRESH_BINARY)
+    
+    # 5. 形态学优化
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (morph_k, morph_k))
+    mask_roi = cv2.dilate(mask_roi, kernel, iterations=2)
+    mask_roi = cv2.morphologyEx(mask_roi, cv2.MORPH_CLOSE, kernel, iterations=3)
+    mask_roi = cv2.morphologyEx(mask_roi, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    # 如果掩码为空，无需修复
+    if cv2.countNonZero(mask_roi) == 0:
+        print("未检测到高梯度区域，跳过修复")
+        return image
+
+    # 6. 构建全图掩码
+    full_h, full_w = image.shape[:2]
+    full_mask = np.zeros((full_h, full_w), dtype=np.uint8)
+    full_mask[y:y+h, x:x+w] = mask_roi
+    
+    # 7. 准备 LaMa 输入 (PIL格式)
+    pad = int(pad_context)
+    crop_x1 = max(0, x - pad)
+    crop_y1 = max(0, y - pad)
+    crop_x2 = min(full_w, x + w + pad)
+    crop_y2 = min(full_h, y + h + pad)
+    
+    img_pil = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    mask_pil = Image.fromarray(full_mask)
+    
+    crop_img_pil = img_pil.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+    crop_mask_pil = mask_pil.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+    
+    # 8. 执行 LaMa 推理
+    lama = _get_lama_model()
+    try:
+        result_pil = lama(crop_img_pil, crop_mask_pil)
+    except Exception as e:
+        print(f"LaMa 推理出错: {e}")
+        return image
+    
+    # 9. 贴回原图 (仅更新框选区域)
+    res_crop_cv = cv2.cvtColor(np.array(result_pil), cv2.COLOR_RGB2BGR)
+    
+    # A. 先解决 LaMa 返回尺寸可能不一致的问题 (针对扩充后的整个区域)
+    target_h_expanded = crop_y2 - crop_y1
+    target_w_expanded = crop_x2 - crop_x1
+    
+    if res_crop_cv.shape[0] != target_h_expanded or res_crop_cv.shape[1] != target_w_expanded:
+        res_crop_cv = cv2.resize(res_crop_cv, (target_w_expanded, target_h_expanded), interpolation=cv2.INTER_LINEAR)
+
+    # B. 计算原始选区在扩充图中的相对位置
+    # 因为 crop_x1 = max(0, x - pad)，所以相对偏移量 offset_x = x - crop_x1
+    offset_x = x - crop_x1
+    offset_y = y - crop_y1
+    
+    # C. 从修复好的大图中，只抠出用户原本框选的那一小块
+    # 这一步确保了只替换用户选中的内容，pad 上下文部分被丢弃
+    final_roi_patch = res_crop_cv[offset_y : offset_y + h, offset_x : offset_x + w]
+    
+    # D. 将这一小块贴回原图
+    result_image = image.copy()
+    result_image[y:y+h, x:x+w] = final_roi_patch
+    
+    return result_image
+  

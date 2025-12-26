@@ -748,7 +748,19 @@ class ImageProcessorApp:
                     {"key": "omega_edge", "label": "边缘强度", "default": 0.30},
                     {"key": "radius", "label": "中心半径", "default": 0.60}
                 ]
-            }
+            },
+            "智能墙面修复 (LaMa+梯度掩码)": {
+                "func": image_methods.repair_wall_white_spots_lama,
+                "interactive_roi": True,  # 开启框选交互
+                "params": [
+                    {"key": "gradient_thresh", "label": "梯度阈值", "default": 120, "tip": "值越小选中的白斑越多，值越大只选强边缘"},
+                    {"key": "blur_k", "label": "模糊半径", "default": 21, "tip": "奇数，用于消除纹理干扰"},
+                    {"key": "sobel_k", "label": "边缘检测半径", "default": 9, "tip": "奇数，检测白斑边缘"},
+                    {"key": "pad_context", "label": "上下文扩展", "default": 128, "tip": "向外扩充像素以获取纹理参考"},
+                    {"key": "color_mode", "label": "颜色空间", "default": 0, "tip": "0=LAB(推荐), 1=HSV, 2=GRAY"},
+                    {"key": "target_channel", "label": "检测通道", "default": 0, "tip": "LAB模式下0为亮度通道"}
+                ]
+            },
         }
 
     def setup_ui(self):
