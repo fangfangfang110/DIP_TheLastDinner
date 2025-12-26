@@ -634,7 +634,7 @@ class ImageProcessorApp:
                     {"key": "gamma_b", "label": "蓝色通道Gamma值", "default": 1.3, "tip": ">1 提亮蓝色，<1 变暗蓝色"}
                 ]
             },
-            "Laplacian特征融合": {
+            "Laplacian特征融合(带分通道NLM去噪)": {
                 "func": image_methods.laplacian_pyramid_fusion,
                 "params": [
                     {'key': 'b_base_h',      'label': '[蓝]底图-去噪强度h', 'default': 9.0},
@@ -671,21 +671,13 @@ class ImageProcessorApp:
                     {"key": "levels", "label": "提取层数", "default": 3, "tip": "层数越多，分离出的低频信息越少"}
                 ]
             },
-            "Laplacian: 注入特征(恢复细节)": {
+            "Laplacian: 注入单层特征(恢复细节)": {
                 "func": image_methods.laplacian_inject_layer,
                 "params": [
                     {"key": "layer_path", "label": "特征层文件", "default": "", "type": "file", "tip": "选择 process 文件夹下保存的 Level_x.png"},
                     {"key": "strength", "label": "注入强度", "default": 1.0, "tip": "1.0=还原, >1=锐化, 负数=模糊"}
                 ]
             },
-            "拉普拉斯: 多层自定义融合": {
-                "func": image_methods.laplacian_inject_multilevel,
-                "params": [
-                    {"key": "anchor_path", "label": "特征定位", "default": "", "type": "file", "tip": "进入特征文件夹，选中任意一个Level文件即可"},
-                    {"key": "weights_str", "label": "各层权重", "default": "1.0, 0.5, 0.2", "tip": "逗号分隔，分别对应第0层、第1层、第2层..."}
-                ]
-            },
-            
             "Reinhard 快速色彩迁移": {
                 "func": image_methods.color_transfer_reinhard,
                 "params": [

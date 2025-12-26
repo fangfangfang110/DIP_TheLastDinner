@@ -940,69 +940,6 @@ def laplacian_inject_layer(image, layer_path, strength=1.0, **kwargs):
     # 3. 限制范围并返回
     return np.clip(result, 0, 255).astype(np.uint8)
 
-def laplacian_inject_multilevel(image, anchor_path, weights_str="1.0, 0.5, 0.2", **kwargs):
-    """
-    多层拉普拉斯特征融合
-    :param anchor_path: 特征文件夹下的任意一个文件 (用于定位目录)
-    :param weights_str: 权重字符串，逗号分隔 (例如 "1.0, 0.5, 0") 分别对应 Level_0, Level_1...
-    """
-    if not anchor_path: return image
-    anchor_path = str(anchor_path).strip('"').strip("'")
-    if not os.path.exists(anchor_path): return image
-    
-    # 1. 获取目录和权重列表
-    search_dir = os.path.dirname(anchor_path)
-    try:
-        # 将 "1.0, 0.5" 解析为 [1.0, 0.5]
-        weights = [float(w.strip()) for w in weights_str.split(',')]
-    except:
-        print("错误：权重格式不正确，请使用英文逗号分隔的数字")
-        return image
-
-    print(f"开始多层融合，目标目录: {search_dir}")
-    print(f"各层权重: {weights}")
-
-    img_float = image.astype(np.float32)
-    h, w = image.shape[:2]
-
-    # 2. 遍历权重，寻找对应的层文件
-    # weights[0] -> 寻找 Level_0_xxx.png
-    # weights[1] -> 寻找 Level_1_xxx.png
-    for level_idx, strength in enumerate(weights):
-        if strength == 0: continue # 权重为0则跳过
-
-        # 搜索匹配的文件名 (不区分 HighFreq 或 LoG，只要开头匹配 Level_X_)
-        target_prefix = f"Level_{level_idx}_"
-        found_file = None
-        
-        for fname in os.listdir(search_dir):
-            if fname.startswith(target_prefix) and (fname.endswith(".png") or fname.endswith(".jpg")):
-                # 排除 Base 层，我们通常只注入细节层，除非你想做图像重构
-                if "Base" in fname: continue 
-                found_file = os.path.join(search_dir, fname)
-                break
-        
-        if not found_file:
-            print(f"警告: 未找到 Level {level_idx} 的特征文件，跳过。")
-            continue
-            
-        # 3. 读取并注入
-        print(f"-> 正在注入: {os.path.basename(found_file)} (强度 {strength})")
-        layer_img = cv2.imdecode(np.fromfile(found_file, dtype=np.uint8), cv2.IMREAD_COLOR)
-        
-        # 自动缩放尺寸以适应当前图片 (关键步骤：金字塔层通常比原图小)
-        if layer_img.shape[:2] != (h, w):
-            layer_img = cv2.resize(layer_img, (w, h), interpolation=cv2.INTER_CUBIC)
-            
-        # 还原数值 (-128 ~ 127) 并加权叠加
-        layer_float = layer_img.astype(np.float32) - 128.0
-        
-        # 核心融合公式: Result += Layer * Weight
-        img_float += layer_float * strength
-
-    # 4. 输出
-    return np.clip(img_float, 0, 255).astype(np.uint8)
-
 # =============================================================================
 # SWD 风格迁移 (新增)
 # =============================================================================
